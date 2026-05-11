@@ -35,11 +35,21 @@ def test_database_schema():
     """Test database schema creation"""
     try:
         import asyncio
-        from database import init_database
+        from database import init_database, db
+        from config import Config
 
         async def test_db():
+            print(f"📊 Using database: {'PostgreSQL' if Config.USE_POSTGRESQL else 'SQLite'}")
             await init_database()
             print("✅ Database schema creation successful")
+
+            # Test basic operations
+            test_user = await db.get_user(999999)
+            if test_user is None:
+                print("✅ Database read operations working")
+            else:
+                print("⚠️ Unexpected user data found")
+
             return True
 
         return asyncio.run(test_db())

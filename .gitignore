@@ -131,3 +131,6 @@ Thumbs.db
 
 # Railway
 railway.json
+
+# Kilo (development tool)
+.kilo/
