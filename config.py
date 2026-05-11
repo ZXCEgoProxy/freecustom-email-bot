@@ -6,9 +6,19 @@ from urllib.parse import urlparse
 # In production (Railway), environment variables are set directly
 load_dotenv(override=False)  # Don't override existing env vars
 
+# Debug: Log environment setup
+print("DEBUG: Config module loaded")
+print(f"DEBUG: Total environment variables: {len(os.environ)}")
+print(f"DEBUG: Environment variables sample: {list(os.environ.keys())[:5]}")
+
 class Config:
-    # Get environment variables with fallback to None for required ones
-    BOT_TOKEN = os.environ.get('BOT_TOKEN')  # Use os.environ instead of os.getenv for direct access
+    # Get BOT_TOKEN with multiple fallback options (Railway might use different names)
+    BOT_TOKEN = (
+        os.environ.get('BOT_TOKEN') or
+        os.environ.get('TELEGRAM_BOT_TOKEN') or
+        os.environ.get('TG_BOT_TOKEN')
+    )
+
     API_BASE_URL = os.environ.get('API_BASE_URL', 'https://api2.freecustom.email')
 
     # Database configuration
@@ -25,6 +35,10 @@ class Config:
 
     @classmethod
     def validate(cls):
+        print(f"DEBUG: BOT_TOKEN value: {repr(cls.BOT_TOKEN)}")
+        print(f"DEBUG: All env vars with TOKEN/BOT: {[k for k in os.environ.keys() if 'TOKEN' in k.upper() or 'BOT' in k.upper()]}")
+        print(f"DEBUG: Total env vars count: {len(os.environ)}")
+
         if not cls.BOT_TOKEN:
             # Debug: show all environment variables (first 10 for safety)
             all_vars = list(os.environ.keys())[:10]
