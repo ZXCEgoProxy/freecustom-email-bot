@@ -51,28 +51,37 @@ git remote add origin https://github.com/yourusername/freecustom-email-bot.git
 git push -u origin main
 ```
 
-#### 2. Деплой на Railway
+#### 2. Деплой на Railway с PostgreSQL
 
 1. Перейдите на [Railway.app](https://railway.app) и авторизуйтесь
 2. Нажмите "New Project" → "Deploy from GitHub repo"
 3. Выберите ваш репозиторий
-4. Railway автоматически обнаружит Python приложение
+4. Railway автоматически обнаружит Python приложение и предложит добавить PostgreSQL
 
-#### 3. Настройка переменных окружения в Railway
+#### 3. Добавление PostgreSQL
+
+При создании проекта Railway предложит добавить сервисы:
+- Выберите **PostgreSQL** как дополнительный сервис
+- Railway автоматически свяжет PostgreSQL с вашим приложением
+- Переменная `DATABASE_URL` будет автоматически добавлена
+
+#### 4. Настройка переменных окружения в Railway
 
 **ОБЯЗАТЕЛЬНО:** В панели управления проектом перейдите в раздел "Variables" и добавьте:
 
 - `BOT_TOKEN` - **ОБЯЗАТЕЛЬНО** ваш токен Telegram бота от @BotFather
 
+Railway автоматически добавит:
+- `DATABASE_URL` - URL для подключения к PostgreSQL
+
 Опциональные переменные (можно не указывать, будут использоваться значения по умолчанию):
 
 - `API_BASE_URL` - `https://api2.freecustom.email`
-- `DATABASE_PATH` - `database.db`
 - `EMAIL_CHECK_INTERVAL` - `30`
 - `DEADLINE_CHECK_INTERVAL` - `60`
 - `DEADLINE_WARNING_MINUTES` - `5`
 
-**Важно:** Без установки `BOT_TOKEN` бот не запустится!
+**Важно:** Railway автоматически переключается на PostgreSQL при наличии `DATABASE_URL`!
 
 #### 4. Запуск
 
@@ -102,7 +111,19 @@ requirements.txt # Зависимости Python
 
 ## 🗄 База данных
 
-Используется SQLite с тремя таблицами:
+Бот поддерживает две базы данных:
+
+### Локальная разработка (SQLite)
+- Используется файловая база данных SQLite
+- Автоматически включается при отсутствии `DATABASE_URL`
+
+### Продакшн (PostgreSQL)
+- Railway автоматически предоставляет PostgreSQL
+- Включается при наличии переменной `DATABASE_URL`
+- Более надежная и масштабируемая
+
+### Структура данных
+Обе базы используют одинаковую структуру с тремя таблицами:
 
 - `users` - пользователи и их API ключи
 - `inboxes` - почтовые ящики пользователей

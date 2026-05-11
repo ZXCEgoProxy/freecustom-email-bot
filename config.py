@@ -1,5 +1,6 @@
 import os
 from dotenv import load_dotenv
+from urllib.parse import urlparse
 
 # Load .env file if it exists (for local development)
 # In production (Railway), environment variables are set directly
@@ -9,7 +10,13 @@ class Config:
     # Get environment variables with fallback to None for required ones
     BOT_TOKEN = os.environ.get('BOT_TOKEN')  # Use os.environ instead of os.getenv for direct access
     API_BASE_URL = os.environ.get('API_BASE_URL', 'https://api2.freecustom.email')
-    DATABASE_PATH = os.environ.get('DATABASE_PATH', 'database.db')
+
+    # Database configuration
+    DATABASE_URL = os.environ.get('DATABASE_URL')  # Railway PostgreSQL
+    DATABASE_PATH = os.environ.get('DATABASE_PATH', 'database.db')  # Fallback for SQLite
+
+    # Determine database type
+    USE_POSTGRESQL = bool(DATABASE_URL and DATABASE_URL.startswith('postgresql'))
 
     # Convert to int with defaults
     EMAIL_CHECK_INTERVAL = int(os.environ.get('EMAIL_CHECK_INTERVAL', 30))

@@ -15,7 +15,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from config import Config
-from database import db, init_database
+from database import db, init_database, close_database
 from api_client import FreeCustomAPIClient, FreeCustomAPIError
 
 # Configure logging
@@ -724,6 +724,7 @@ async def on_shutdown():
     """Shutdown bot"""
     logger.info("Bot shutting down...")
     scheduler.shutdown()
+    await close_database()
     if bot:
         await bot.session.close()
     logger.info("Bot shut down successfully")
