@@ -60,14 +60,19 @@ git push -u origin main
 
 #### 3. Настройка переменных окружения в Railway
 
-В панели управления проектом перейдите в "Variables" и добавьте:
+**ОБЯЗАТЕЛЬНО:** В панели управления проектом перейдите в раздел "Variables" и добавьте:
 
-- `BOT_TOKEN` - ваш токен Telegram бота
-- `API_BASE_URL` - `https://api2.freecustom.email` (по умолчанию)
-- `DATABASE_PATH` - `database.db` (по умолчанию)
-- `EMAIL_CHECK_INTERVAL` - `30` (по умолчанию)
-- `DEADLINE_CHECK_INTERVAL` - `60` (по умолчанию)
-- `DEADLINE_WARNING_MINUTES` - `5` (по умолчанию)
+- `BOT_TOKEN` - **ОБЯЗАТЕЛЬНО** ваш токен Telegram бота от @BotFather
+
+Опциональные переменные (можно не указывать, будут использоваться значения по умолчанию):
+
+- `API_BASE_URL` - `https://api2.freecustom.email`
+- `DATABASE_PATH` - `database.db`
+- `EMAIL_CHECK_INTERVAL` - `30`
+- `DEADLINE_CHECK_INTERVAL` - `60`
+- `DEADLINE_WARNING_MINUTES` - `5`
+
+**Важно:** Без установки `BOT_TOKEN` бот не запустится!
 
 #### 4. Запуск
 
