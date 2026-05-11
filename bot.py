@@ -22,8 +22,8 @@ from api_client import FreeCustomAPIClient, FreeCustomAPIError
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize bot and dispatcher
-bot = Bot(token=Config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+# Global variables (initialized in main)
+bot = None
 dp = Dispatcher(storage=MemoryStorage())
 scheduler = AsyncIOScheduler()
 
@@ -686,13 +686,14 @@ async def check_expiring_emails():
 
         for inbox in expiring_inboxes:
             try:
-                await bot.send_message(
-                    inbox['user_id'],
-                    f"⚠️ Почта <b>{inbox['email']}</b> скоро истечет!\n\n"
-                    f"⏰ Время жизни: {inbox['expires_at'].strftime('%Y-%m-%d %H:%M')}\n\n"
-                    f"После истечения срока ящик будет автоматически удален.",
-                    parse_mode=ParseMode.HTML
-                )
+                if bot:
+                    await bot.send_message(
+                        inbox['user_id'],
+                        f"⚠️ Почта <b>{inbox['email']}</b> скоро истечет!\n\n"
+                        f"⏰ Время жизни: {inbox['expires_at'].strftime('%Y-%m-%d %H:%M')}\n\n"
+                        f"После истечения срока ящик будет автоматически удален.",
+                        parse_mode=ParseMode.HTML
+                    )
             except Exception as e:
                 logger.error(f"Failed to send expiry warning to user {inbox['user_id']}: {e}")
 
@@ -723,7 +724,8 @@ async def on_shutdown():
     """Shutdown bot"""
     logger.info("Bot shutting down...")
     scheduler.shutdown()
-    await bot.session.close()
+    if bot:
+        await bot.session.close()
     logger.info("Bot shut down successfully")
 
 # Main function
@@ -735,6 +737,10 @@ async def main():
     except ValueError as e:
         logger.error(f"Configuration error: {e}")
         return
+
+    # Initialize bot after config validation
+    global bot
+    bot = Bot(token=Config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 
     # Set up startup/shutdown handlers
     dp.startup.register(on_startup)
