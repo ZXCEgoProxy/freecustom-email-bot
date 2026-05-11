@@ -6,11 +6,6 @@ from urllib.parse import urlparse
 # In production (Railway), environment variables are set directly
 load_dotenv(override=False)  # Don't override existing env vars
 
-# Debug: Log environment setup
-print("DEBUG: Config module loaded")
-print(f"DEBUG: Total environment variables: {len(os.environ)}")
-print(f"DEBUG: Environment variables sample: {list(os.environ.keys())[:5]}")
-
 class Config:
     # Get BOT_TOKEN with multiple fallback options (Railway might use different names)
     BOT_TOKEN = (
@@ -35,17 +30,13 @@ class Config:
 
     @classmethod
     def validate(cls):
-        print(f"DEBUG: BOT_TOKEN value: {repr(cls.BOT_TOKEN)}")
-        print(f"DEBUG: All env vars with TOKEN/BOT: {[k for k in os.environ.keys() if 'TOKEN' in k.upper() or 'BOT' in k.upper()]}")
-        print(f"DEBUG: Total env vars count: {len(os.environ)}")
-
         if not cls.BOT_TOKEN:
-            # Debug: show all environment variables (first 10 for safety)
-            all_vars = list(os.environ.keys())[:10]
+            # Show helpful error with available environment variables for debugging
             available_vars = [k for k in os.environ.keys() if 'TOKEN' in k.upper() or 'BOT' in k.upper()]
+            all_vars = list(os.environ.keys())[:10]
             error_msg = "BOT_TOKEN environment variable is required. Please set it in Railway Variables."
             if available_vars:
-                error_msg += f" Available token-related vars: {available_vars}"
+                error_msg += f" Found token-related vars: {available_vars}"
             else:
-                error_msg += f" No token-related environment variables found. Available vars (first 10): {all_vars}"
+                error_msg += f" No token-related environment variables found. Available vars: {all_vars}"
             raise ValueError(error_msg)
