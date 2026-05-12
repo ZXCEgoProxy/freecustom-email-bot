@@ -371,6 +371,17 @@ class PostgreSQLDatabase(BaseDatabase):
         """Initialize PostgreSQL database with required tables"""
         conn = await self._get_connection()
         try:
+            # API Profiles table (create first)
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS api_profiles (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL,
+                    profile_name TEXT NOT NULL,
+                    api_key TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+
             # Users table
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS users (
@@ -394,6 +405,62 @@ class PostgreSQLDatabase(BaseDatabase):
                 # Add active_profile_id column if it doesn't exist
                 await conn.execute('''
                     ALTER TABLE users ADD COLUMN IF NOT EXISTS active_profile_id INTEGER
+                ''')
+            except Exception:
+                pass
+
+            # Add foreign key reference to api_profiles after both tables exist
+            try:
+                await conn.execute('''
+                    ALTER TABLE api_profiles ADD CONSTRAINT api_profiles_user_id_fkey
+                    FOREIGN KEY (user_id) REFERENCES users (user_id)
+                ''')
+            except Exception:
+                pass  # Constraint might already exist
+
+            # Inboxes table
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS inboxes (
+                    id SERIAL PRIMARY KEY,
+                    profile_id INTEGER NOT NULL,
+                    email TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    expires_at TIMESTAMP,
+                    last_checked TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    status TEXT DEFAULT 'active'
+                )
+            ''')
+
+            # Add foreign key reference to api_profiles
+            try:
+                await conn.execute('''
+                    ALTER TABLE inboxes ADD CONSTRAINT inboxes_profile_id_fkey
+                    FOREIGN KEY (profile_id) REFERENCES api_profiles(id) ON DELETE CASCADE
+                ''')
+            except Exception:
+                pass  # Constraint might already exist
+
+            # Migrate existing inboxes table if needed
+            try:
+                # Drop old foreign key if exists
+                await conn.execute('''
+                    ALTER TABLE inboxes DROP CONSTRAINT IF EXISTS inboxes_user_id_fkey
+                ''')
+            except Exception:
+                pass
+
+            try:
+                # Add profile_id column if it doesn't exist
+                await conn.execute('''
+                    ALTER TABLE inboxes ADD COLUMN IF NOT EXISTS profile_id INTEGER
+                ''')
+            except Exception:
+                pass
+
+            try:
+                # Drop old user_id column if exists
+                await conn.execute('''
+                    ALTER TABLE inboxes DROP COLUMN IF EXISTS user_id
                 ''')
             except Exception:
                 pass
