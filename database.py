@@ -20,16 +20,19 @@ class BaseDatabase:
     async def get_user(self, user_id: int) -> Optional[Dict[str, Any]]:
         raise NotImplementedError
 
+    async def create_user(self, user_id: int):
+        raise NotImplementedError
+
     async def save_user(self, user_id: int, api_key: str):
         raise NotImplementedError
 
     async def delete_user(self, user_id: int):
         raise NotImplementedError
 
-    async def save_inbox(self, user_id: int, email: str, expires_at: Optional[datetime] = None) -> int:
+    async def save_inbox(self, profile_id: int, email: str, expires_at: Optional[datetime] = None) -> int:
         raise NotImplementedError
 
-    async def get_user_inboxes(self, user_id: int) -> List[Dict[str, Any]]:
+    async def get_profile_inboxes(self, profile_id: int) -> List[Dict[str, Any]]:
         raise NotImplementedError
 
     async def get_inbox(self, inbox_id: int) -> Optional[Dict[str, Any]]:
@@ -56,6 +59,25 @@ class BaseDatabase:
     async def get_expiring_inboxes(self, minutes_ahead: int = 5) -> List[Dict[str, Any]]:
         raise NotImplementedError
 
+    # API Profiles management
+    async def get_user_api_profiles(self, user_id: int) -> List[Dict[str, Any]]:
+        raise NotImplementedError
+
+    async def save_api_profile(self, user_id: int, profile_name: str, api_key: str) -> int:
+        raise NotImplementedError
+
+    async def get_api_profile(self, profile_id: int) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError
+
+    async def delete_api_profile(self, profile_id: int):
+        raise NotImplementedError
+
+    async def set_active_profile(self, user_id: int, profile_id: int):
+        raise NotImplementedError
+
+    async def get_active_profile(self, user_id: int) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError
+
 class SQLiteDatabase(BaseDatabase):
     def __init__(self, db_path: str = Config.DATABASE_PATH):
         self.db_path = db_path
@@ -67,8 +89,21 @@ class SQLiteDatabase(BaseDatabase):
             await db.execute('''
                 CREATE TABLE IF NOT EXISTS users (
                     user_id INTEGER PRIMARY KEY,
+                    active_profile_id INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (active_profile_id) REFERENCES api_profiles (id)
+                )
+            ''')
+
+            # API Profiles table
+            await db.execute('''
+                CREATE TABLE IF NOT EXISTS api_profiles (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    profile_name TEXT NOT NULL,
                     api_key TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users (user_id)
                 )
             ''')
 
@@ -76,13 +111,13 @@ class SQLiteDatabase(BaseDatabase):
             await db.execute('''
                 CREATE TABLE IF NOT EXISTS inboxes (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
+                    profile_id INTEGER NOT NULL,
                     email TEXT NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     expires_at TIMESTAMP,
                     last_checked TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     status TEXT DEFAULT 'active',  -- active, archived, deleted
-                    FOREIGN KEY (user_id) REFERENCES users (user_id)
+                    FOREIGN KEY (profile_id) REFERENCES api_profiles (id)
                 )
             ''')
 
@@ -113,14 +148,20 @@ class SQLiteDatabase(BaseDatabase):
                 row = await cursor.fetchone()
                 return dict(row) if row else None
 
-    async def save_user(self, user_id: int, api_key: str):
-        """Save or update user with API key"""
+    async def create_user(self, user_id: int):
+        """Create user if not exists"""
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute('''
-                INSERT OR REPLACE INTO users (user_id, api_key, created_at)
-                VALUES (?, ?, ?)
-            ''', (user_id, api_key, datetime.now()))
+                INSERT OR IGNORE INTO users (user_id, created_at)
+                VALUES (?, ?)
+            ''', (user_id, datetime.now()))
             await db.commit()
+
+    async def save_user(self, user_id: int, api_key: str):
+        """Legacy method - creates default profile"""
+        await self.create_user(user_id)
+        profile_id = await self.save_api_profile(user_id, "Default", api_key)
+        await self.set_active_profile(user_id, profile_id)
 
     async def delete_user(self, user_id: int):
         """Delete user and all their data"""
@@ -132,26 +173,26 @@ class SQLiteDatabase(BaseDatabase):
             await db.commit()
 
     # Inbox operations
-    async def save_inbox(self, user_id: int, email: str, expires_at: Optional[datetime] = None) -> int:
+    async def save_inbox(self, profile_id: int, email: str, expires_at: Optional[datetime] = None) -> int:
         """Save inbox and return its ID"""
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute('''
-                INSERT INTO inboxes (user_id, email, expires_at, status)
+                INSERT INTO inboxes (profile_id, email, expires_at, status)
                 VALUES (?, ?, ?, 'active')
-            ''', (user_id, email, expires_at))
+            ''', (profile_id, email, expires_at))
             inbox_id = cursor.lastrowid
             await db.commit()
             return inbox_id
 
-    async def get_user_inboxes(self, user_id: int) -> List[Dict[str, Any]]:
-        """Get all active inboxes for user"""
+    async def get_profile_inboxes(self, profile_id: int) -> List[Dict[str, Any]]:
+        """Get all active inboxes for profile"""
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             async with db.execute('''
                 SELECT * FROM inboxes
-                WHERE user_id = ? AND status = 'active'
+                WHERE profile_id = ? AND status = 'active'
                 ORDER BY created_at DESC
-            ''', (user_id,)) as cursor:
+            ''', (profile_id,)) as cursor:
                 rows = await cursor.fetchall()
                 return [dict(row) for row in rows]
 
@@ -240,6 +281,61 @@ class SQLiteDatabase(BaseDatabase):
                 rows = await cursor.fetchall()
                 return [dict(row) for row in rows]
 
+    # API Profiles management
+    async def get_user_api_profiles(self, user_id: int) -> List[Dict[str, Any]]:
+        """Get all API profiles for user"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute('SELECT * FROM api_profiles WHERE user_id = ? ORDER BY created_at', (user_id,)) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(row) for row in rows]
+
+    async def save_api_profile(self, user_id: int, profile_name: str, api_key: str) -> int:
+        """Save API profile and return its ID"""
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute('''
+                INSERT INTO api_profiles (user_id, profile_name, api_key)
+                VALUES (?, ?, ?)
+            ''', (user_id, profile_name, api_key))
+            profile_id = cursor.lastrowid
+            await db.commit()
+            return profile_id
+
+    async def get_api_profile(self, profile_id: int) -> Optional[Dict[str, Any]]:
+        """Get API profile by ID"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute('SELECT * FROM api_profiles WHERE id = ?', (profile_id,)) as cursor:
+                row = await cursor.fetchone()
+                return dict(row) if row else None
+
+    async def delete_api_profile(self, profile_id: int):
+        """Delete API profile and all related data"""
+        async with aiosqlite.connect(self.db_path) as db:
+            # Delete messages and inboxes first (foreign key constraints)
+            await db.execute('DELETE FROM messages WHERE inbox_id IN (SELECT id FROM inboxes WHERE profile_id = ?)', (profile_id,))
+            await db.execute('DELETE FROM inboxes WHERE profile_id = ?', (profile_id,))
+            await db.execute('DELETE FROM api_profiles WHERE id = ?', (profile_id,))
+            await db.commit()
+
+    async def set_active_profile(self, user_id: int, profile_id: int):
+        """Set active API profile for user"""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute('UPDATE users SET active_profile_id = ? WHERE user_id = ?', (profile_id, user_id))
+            await db.commit()
+
+    async def get_active_profile(self, user_id: int) -> Optional[Dict[str, Any]]:
+        """Get active API profile for user"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute('''
+                SELECT ap.* FROM api_profiles ap
+                JOIN users u ON ap.id = u.active_profile_id
+                WHERE u.user_id = ?
+            ''', (user_id,)) as cursor:
+                row = await cursor.fetchone()
+                return dict(row) if row else None
+
 class PostgreSQLDatabase(BaseDatabase):
     def __init__(self, database_url: str):
         self.database_url = database_url
@@ -309,19 +405,23 @@ class PostgreSQLDatabase(BaseDatabase):
         finally:
             await self._release_connection(conn)
 
-    async def save_user(self, user_id: int, api_key: str):
-        """Save or update user with API key"""
+    async def create_user(self, user_id: int):
+        """Create user if not exists"""
         conn = await self._get_connection()
         try:
             await conn.execute('''
-                INSERT INTO users (user_id, api_key, created_at)
-                VALUES ($1, $2, $3)
-                ON CONFLICT (user_id) DO UPDATE SET
-                    api_key = EXCLUDED.api_key,
-                    created_at = EXCLUDED.created_at
-            ''', user_id, api_key, datetime.now())
+                INSERT INTO users (user_id, created_at)
+                VALUES ($1, $2)
+                ON CONFLICT (user_id) DO NOTHING
+            ''', user_id, datetime.now())
         finally:
             await self._release_connection(conn)
+
+    async def save_user(self, user_id: int, api_key: str):
+        """Legacy method - creates default profile"""
+        await self.create_user(user_id)
+        profile_id = await self.save_api_profile(user_id, "Default", api_key)
+        await self.set_active_profile(user_id, profile_id)
 
     async def delete_user(self, user_id: int):
         """Delete user and all their data (CASCADE will handle related tables)"""
@@ -331,28 +431,28 @@ class PostgreSQLDatabase(BaseDatabase):
         finally:
             await self._release_connection(conn)
 
-    async def save_inbox(self, user_id: int, email: str, expires_at: Optional[datetime] = None) -> int:
+    async def save_inbox(self, profile_id: int, email: str, expires_at: Optional[datetime] = None) -> int:
         """Save inbox and return its ID"""
         conn = await self._get_connection()
         try:
             result = await conn.fetchval('''
-                INSERT INTO inboxes (user_id, email, expires_at, status)
+                INSERT INTO inboxes (profile_id, email, expires_at, status)
                 VALUES ($1, $2, $3, 'active')
                 RETURNING id
-            ''', user_id, email, expires_at)
+            ''', profile_id, email, expires_at)
             return result
         finally:
             await self._release_connection(conn)
 
-    async def get_user_inboxes(self, user_id: int) -> List[Dict[str, Any]]:
-        """Get all active inboxes for user"""
+    async def get_profile_inboxes(self, profile_id: int) -> List[Dict[str, Any]]:
+        """Get all active inboxes for profile"""
         conn = await self._get_connection()
         try:
             rows = await conn.fetch('''
                 SELECT * FROM inboxes
-                WHERE user_id = $1 AND status = 'active'
+                WHERE profile_id = $1 AND status = 'active'
                 ORDER BY created_at DESC
-            ''', user_id)
+            ''', profile_id)
             return [dict(row) for row in rows]
         finally:
             await self._release_connection(conn)
@@ -454,6 +554,70 @@ class PostgreSQLDatabase(BaseDatabase):
         """Close database connection pool"""
         if self.pool:
             await self.pool.close()
+
+    # API Profiles management
+    async def get_user_api_profiles(self, user_id: int) -> List[Dict[str, Any]]:
+        """Get all API profiles for user"""
+        conn = await self._get_connection()
+        try:
+            rows = await conn.fetch('SELECT * FROM api_profiles WHERE user_id = $1 ORDER BY created_at', user_id)
+            return [dict(row) for row in rows]
+        finally:
+            await self._release_connection(conn)
+
+    async def save_api_profile(self, user_id: int, profile_name: str, api_key: str) -> int:
+        """Save API profile and return its ID"""
+        conn = await self._get_connection()
+        try:
+            result = await conn.fetchval('''
+                INSERT INTO api_profiles (user_id, profile_name, api_key)
+                VALUES ($1, $2, $3)
+                RETURNING id
+            ''', user_id, profile_name, api_key)
+            return result
+        finally:
+            await self._release_connection(conn)
+
+    async def get_api_profile(self, profile_id: int) -> Optional[Dict[str, Any]]:
+        """Get API profile by ID"""
+        conn = await self._get_connection()
+        try:
+            row = await conn.fetchrow('SELECT * FROM api_profiles WHERE id = $1', profile_id)
+            return dict(row) if row else None
+        finally:
+            await self._release_connection(conn)
+
+    async def delete_api_profile(self, profile_id: int):
+        """Delete API profile and all related data"""
+        conn = await self._get_connection()
+        try:
+            # Delete messages and inboxes first (CASCADE will handle it, but let's be explicit)
+            await conn.execute('DELETE FROM messages WHERE inbox_id IN (SELECT id FROM inboxes WHERE profile_id = $1)', profile_id)
+            await conn.execute('DELETE FROM inboxes WHERE profile_id = $1', profile_id)
+            await conn.execute('DELETE FROM api_profiles WHERE id = $1', profile_id)
+        finally:
+            await self._release_connection(conn)
+
+    async def set_active_profile(self, user_id: int, profile_id: int):
+        """Set active API profile for user"""
+        conn = await self._get_connection()
+        try:
+            await conn.execute('UPDATE users SET active_profile_id = $1 WHERE user_id = $2', profile_id, user_id)
+        finally:
+            await self._release_connection(conn)
+
+    async def get_active_profile(self, user_id: int) -> Optional[Dict[str, Any]]:
+        """Get active API profile for user"""
+        conn = await self._get_connection()
+        try:
+            row = await conn.fetchrow('''
+                SELECT ap.* FROM api_profiles ap
+                JOIN users u ON ap.id = u.active_profile_id
+                WHERE u.user_id = $1
+            ''', user_id)
+            return dict(row) if row else None
+        finally:
+            await self._release_connection(conn)
 
 # Factory function to create appropriate database instance
 def create_database():

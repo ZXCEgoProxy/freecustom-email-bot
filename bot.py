@@ -30,6 +30,8 @@ scheduler = AsyncIOScheduler()
 # FSM States
 class APIKeySetup(StatesGroup):
     waiting_for_key = State()
+    waiting_for_profile_name = State()
+    waiting_for_profile_key = State()
 
 class EmailManagement(StatesGroup):
     waiting_for_domain = State()
@@ -89,7 +91,7 @@ def get_main_menu_keyboard() -> types.InlineKeyboardMarkup:
     keyboard = [
         [types.InlineKeyboardButton(text="📬 Мои почты", callback_data="list_emails")],
         [types.InlineKeyboardButton(text="➕ Создать новую почту", callback_data="create_email")],
-        [types.InlineKeyboardButton(text="⚙️ Настройки API", callback_data="api_settings")],
+        [types.InlineKeyboardButton(text="👤 Профили API", callback_data="api_profiles")],
         [types.InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")]
     ]
     return types.InlineKeyboardMarkup(inline_keyboard=keyboard)
@@ -112,11 +114,12 @@ def get_message_actions_keyboard(message_id: int, inbox_id: int) -> types.Inline
     ]
     return types.InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-def get_api_settings_keyboard() -> types.InlineKeyboardMarkup:
-    """API settings keyboard"""
+def get_api_profiles_keyboard() -> types.InlineKeyboardMarkup:
+    """API profiles management keyboard"""
     keyboard = [
-        [types.InlineKeyboardButton(text="🔄 Сменить ключ", callback_data="change_api_key")],
-        [types.InlineKeyboardButton(text="❌ Удалить ключ", callback_data="delete_api_key")],
+        [types.InlineKeyboardButton(text="➕ Добавить профиль", callback_data="add_api_profile")],
+        [types.InlineKeyboardButton(text="🔄 Выбрать активный", callback_data="select_active_profile")],
+        [types.InlineKeyboardButton(text="⚙️ Управление профилями", callback_data="manage_profiles")],
         [types.InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ]
     return types.InlineKeyboardMarkup(inline_keyboard=keyboard)
@@ -126,31 +129,79 @@ def get_back_keyboard(callback_data: str = "back_to_main") -> types.InlineKeyboa
     keyboard = [[types.InlineKeyboardButton(text="🔙 Назад", callback_data=callback_data)]]
     return types.InlineKeyboardMarkup(inline_keyboard=keyboard)
 
+async def show_api_profiles(message_or_callback, user_id: int):
+    """Show API profiles for user"""
+    profiles = await db.get_user_api_profiles(user_id)
+    active_profile = await db.get_active_profile(user_id)
+
+    if not profiles:
+        text = "❌ У вас нет API профилей.\n\nСоздайте первый профиль:"
+        keyboard = [[types.InlineKeyboardButton(text="➕ Создать профиль", callback_data="add_api_profile")]]
+    else:
+        text = "👤 Ваши API профили:\n\n"
+        keyboard = []
+
+        for profile in profiles:
+            status = "✅" if active_profile and active_profile['id'] == profile['id'] else "⚪"
+            text += f"{status} <b>{profile['profile_name']}</b>\n"
+            text += f"   🔑 {profile['api_key'][:10]}...{profile['api_key'][-4:]}\n"
+            text += f"   📅 {profile['created_at'].strftime('%Y-%m-%d %H:%M')}\n\n"
+
+            # Button to select this profile
+            keyboard.append([
+                types.InlineKeyboardButton(
+                    text=f"🎯 Выбрать {profile['profile_name']}",
+                    callback_data=f"select_profile:{profile['id']}"
+                )
+            ])
+
+        keyboard.append([types.InlineKeyboardButton(text="➕ Добавить профиль", callback_data="add_api_profile")])
+        keyboard.append([types.InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")])
+
+    reply_markup = types.InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+    if hasattr(message_or_callback, 'edit_text'):
+        # It's a callback
+        await message_or_callback.edit_text(text, reply_markup=reply_markup)
+    else:
+        # It's a message
+        await message_or_callback.answer(text, reply_markup=reply_markup)
+
 # Command handlers
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     """Handle /start command"""
     user_id = message.from_user.id
 
-    # Check if user has API key
-    user_data = await db.get_user(user_id)
+    # Create user if not exists
+    await db.create_user(user_id)
 
-    if user_data:
-        # User has API key, show main menu
+    # Check if user has active API profile
+    active_profile = await db.get_active_profile(user_id)
+
+    if active_profile:
+        # User has active profile, show main menu
         await message.answer(
-            "👋 Добро пожаловать в FreeCustom Email Manager!\n\n"
-            "Выберите действие:",
+            f"👋 Добро пожаловать в FreeCustom Email Manager!\n\n"
+            f"🔑 Активный профиль: <b>{active_profile['profile_name']}</b>\n\n"
+            f"Выберите действие:",
             reply_markup=get_main_menu_keyboard()
         )
     else:
-        # User needs to set up API key
-        await message.answer(
-            "👋 Добро пожаловать в FreeCustom Email Manager!\n\n"
-            "Для начала работы необходимо настроить API ключ от сервиса FreeCustom.Email.\n\n"
-            "🔑 Получите ключ на сайте freecustom.email и отправьте его мне:",
-            reply_markup=get_back_keyboard("cancel_setup")
-        )
-        await state.set_state(APIKeySetup.waiting_for_key)
+        # User needs to set up API profile
+        profiles = await db.get_user_api_profiles(user_id)
+        if profiles:
+            # User has profiles but no active one - show profile selection
+            await show_api_profiles(message, user_id)
+        else:
+            # No profiles - setup first profile
+            await message.answer(
+                "👋 Добро пожаловать в FreeCustom Email Manager!\n\n"
+                "Для начала работы необходимо настроить API профиль FreeCustom.Email.\n\n"
+                "🔑 Получите ключ на сайте freecustom.email и отправьте его мне:",
+                reply_markup=get_back_keyboard("cancel_setup")
+            )
+            await state.set_state(APIKeySetup.waiting_for_key)
 
 @dp.message(APIKeySetup.waiting_for_key)
 async def process_api_key(message: types.Message, state: FSMContext):
@@ -162,7 +213,7 @@ async def process_api_key(message: types.Message, state: FSMContext):
         await message.answer("❌ Ключ не может быть пустым. Попробуйте еще раз:")
         return
 
-    # Validate API key
+    # Validate API key and create profile
     try:
         logger.info(f"Validating API key for user {user_id}: {api_key[:10]}...")
         async with FreeCustomAPIClient(api_key) as client:
@@ -170,9 +221,12 @@ async def process_api_key(message: types.Message, state: FSMContext):
             logger.info(f"API key validation result: {is_valid}")
 
             if is_valid:
-                await db.save_user(user_id, api_key)
+                # Create default profile
+                profile_id = await db.save_api_profile(user_id, "Мой профиль", api_key)
+                await db.set_active_profile(user_id, profile_id)
+
                 await message.answer(
-                    "✅ API ключ успешно сохранен!\n\n"
+                    "✅ API профиль успешно создан!\n\n"
                     "Теперь вы можете управлять временными почтовыми ящиками.",
                     reply_markup=get_main_menu_keyboard()
                 )
@@ -183,6 +237,59 @@ async def process_api_key(message: types.Message, state: FSMContext):
                 )
     except FreeCustomAPIError as e:
         await message.answer(f"❌ Ошибка проверки ключа: {str(e)}\n\nПопробуйте еще раз:")
+
+@dp.message(APIKeySetup.waiting_for_profile_name)
+async def process_profile_name(message: types.Message, state: FSMContext):
+    """Process profile name input"""
+    profile_name = message.text.strip()
+    if not profile_name:
+        await message.answer("❌ Название не может быть пустым. Попробуйте еще раз:")
+        return
+
+    await state.update_data(profile_name=profile_name)
+    await message.answer(
+        f"✅ Название профиля: <b>{profile_name}</b>\n\n"
+        "Теперь введите API ключ от FreeCustom.Email:",
+        parse_mode=ParseMode.HTML
+    )
+    await state.set_state(APIKeySetup.waiting_for_profile_key)
+
+@dp.message(APIKeySetup.waiting_for_profile_key)
+async def process_profile_key(message: types.Message, state: FSMContext):
+    """Process API key for new profile"""
+    user_id = message.from_user.id
+    api_key = message.text.strip()
+    state_data = await state.get_data()
+    profile_name = state_data.get('profile_name')
+
+    if not api_key:
+        await message.answer("❌ API ключ не может быть пустым. Попробуйте еще раз:")
+        return
+
+    # Validate API key
+    try:
+        async with FreeCustomAPIClient(api_key) as client:
+            is_valid = await client.validate_api_key()
+
+            if is_valid:
+                profile_id = await db.save_api_profile(user_id, profile_name, api_key)
+
+                # Set as active if it's the first profile
+                profiles = await db.get_user_api_profiles(user_id)
+                if len(profiles) == 1:
+                    await db.set_active_profile(user_id, profile_id)
+
+                await message.answer(
+                    f"✅ API профиль <b>{profile_name}</b> успешно создан!\n\n"
+                    "Теперь вы можете переключаться между профилями.",
+                    reply_markup=get_main_menu_keyboard(),
+                    parse_mode=ParseMode.HTML
+                )
+                await state.clear()
+            else:
+                await message.answer("❌ Неверный API ключ. Проверьте ключ и попробуйте еще раз:")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка валидации ключа: {str(e)}\n\nПопробуйте еще раз:")
 
 # Callback query handlers
 @dp.callback_query(lambda c: c.data == "back_to_main")
@@ -212,16 +319,16 @@ async def list_emails(callback: types.CallbackQuery):
         await callback.answer("⏳ Подождите немного перед следующим запросом")
         return
 
-    user_data = await db.get_user(user_id)
-    if not user_data:
+    active_profile = await db.get_active_profile(user_id)
+    if not active_profile:
         await callback.message.edit_text(
-            "❌ API ключ не найден. Необходимо настроить ключ заново.",
-            reply_markup=get_back_keyboard("change_api_key")
+            "❌ Активный API профиль не найден. Выберите профиль в настройках.",
+            reply_markup=get_back_keyboard("api_profiles")
         )
         await callback.answer()
         return
 
-    inboxes = await db.get_user_inboxes(user_id)
+    inboxes = await db.get_profile_inboxes(active_profile['id'])
 
     if not inboxes:
         await callback.message.edit_text(
@@ -292,19 +399,19 @@ async def create_email_start(callback: types.CallbackQuery, state: FSMContext):
     """Start email creation process"""
     user_id = callback.from_user.id
 
-    user_data = await db.get_user(user_id)
-    if not user_data:
+    active_profile = await db.get_active_profile(user_id)
+    if not active_profile:
         await callback.message.edit_text(
-            "❌ API ключ не найден. Необходимо настроить ключ заново.",
-            reply_markup=get_back_keyboard("change_api_key")
+            "❌ Активный API профиль не найден. Выберите профиль в настройках.",
+            reply_markup=get_back_keyboard("api_profiles")
         )
         await callback.answer()
         return
 
     # Try to create email directly
     try:
-        logger.info(f"Creating email for user {user_id} with API key: {user_data['api_key'][:10]}...")
-        async with FreeCustomAPIClient(user_data['api_key']) as client:
+        logger.info(f"Creating email for user {user_id} with profile {active_profile['profile_name']}: {active_profile['api_key'][:10]}...")
+        async with FreeCustomAPIClient(active_profile['api_key']) as client:
             # First validate the API key is still working
             is_valid = await client.validate_api_key()
             if not is_valid:
@@ -321,7 +428,7 @@ async def create_email_start(callback: types.CallbackQuery, state: FSMContext):
 
             # Save to database
             expires_at = FreeCustomAPIClient.parse_expiry_time(email_data.get('expires_in'))
-            inbox_id = await db.save_inbox(user_id, email_data['email'], expires_at)
+            inbox_id = await db.save_inbox(active_profile['id'], email_data['email'], expires_at)
 
             # Copy address button
             keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
@@ -598,25 +705,10 @@ async def confirm_delete_email(callback: types.CallbackQuery):
     )
     await callback.answer()
 
-@dp.callback_query(lambda c: c.data == "api_settings")
-async def api_settings(callback: types.CallbackQuery):
-    """API settings menu"""
-    user_data = await db.get_user(callback.from_user.id)
-
-    text = "⚙️ Настройки API ключа\n\n"
-
-    if user_data:
-        # Mask API key for security
-        masked_key = user_data['api_key'][:8] + "..." + user_data['api_key'][-4:]
-        text += f"🔑 Текущий ключ: <code>{masked_key}</code>\n"
-        text += f"📅 Настроен: {user_data['created_at'].strftime('%Y-%m-%d %H:%M')}"
-    else:
-        text += "❌ API ключ не настроен"
-
-    await callback.message.edit_text(
-        text,
-        reply_markup=get_api_settings_keyboard()
-    )
+@dp.callback_query(lambda c: c.data == "api_profiles")
+async def api_profiles_menu(callback: types.CallbackQuery):
+    """API profiles menu"""
+    await show_api_profiles(callback, callback.from_user.id)
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "change_api_key")
@@ -695,6 +787,37 @@ async def show_help(callback: types.CallbackQuery):
         reply_markup=get_back_keyboard("back_to_main"),
         parse_mode=ParseMode.HTML
     )
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data.startswith("select_profile:"))
+async def select_profile(callback: types.CallbackQuery):
+    """Select active API profile"""
+    profile_id = int(callback.data.split(":")[1])
+    user_id = callback.from_user.id
+
+    # Verify profile belongs to user
+    profile = await db.get_api_profile(profile_id)
+    if not profile or profile['user_id'] != user_id:
+        await callback.answer("❌ Профиль не найден")
+        return
+
+    await db.set_active_profile(user_id, profile_id)
+
+    await callback.message.edit_text(
+        f"✅ Активный профиль изменен на: <b>{profile['profile_name']}</b>\n\n"
+        f"Теперь все операции будут использовать этот API ключ.",
+        reply_markup=get_back_keyboard("api_profiles")
+    )
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "add_api_profile")
+async def add_api_profile_start(callback: types.CallbackQuery, state: FSMContext):
+    """Start adding new API profile"""
+    await callback.message.edit_text(
+        "➕ Добавление нового API профиля\n\n"
+        "Введите название профиля (например, 'Рабочий', 'Личный'):"
+    )
+    await state.set_state(APIKeySetup.waiting_for_profile_name)
     await callback.answer()
 
 # Background tasks
