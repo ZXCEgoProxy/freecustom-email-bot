@@ -75,10 +75,10 @@ class FreeCustomAPIClient:
             except FreeCustomAPIError:
                 return False
 
-    async def get_domains(self) -> List[str]:
+    async def get_domains(self) -> List[Dict[str, Any]]:
         """Get available domains"""
         response = await self._make_request('GET', '/domains')
-        return response.get('domains', [])
+        return response.get('data', [])
 
     async def create_email(self, domain: Optional[str] = None) -> Dict[str, Any]:
         """Create a new temporary email"""
