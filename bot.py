@@ -129,6 +129,16 @@ def get_back_keyboard(callback_data: str = "back_to_main") -> types.InlineKeyboa
     keyboard = [[types.InlineKeyboardButton(text="🔙 Назад", callback_data=callback_data)]]
     return types.InlineKeyboardMarkup(inline_keyboard=keyboard)
 
+async def get_inbox_owner_user_id(inbox_id: int) -> Optional[int]:
+    """Get user_id of inbox owner through profile relationship"""
+    inbox = await db.get_inbox(inbox_id)
+    if not inbox:
+        return None
+
+    # Get profile to find user_id
+    profile = await db.get_api_profile(inbox['profile_id'])
+    return profile['user_id'] if profile else None
+
 async def show_api_profiles(message_or_callback, user_id: int):
     """Show API profiles for user"""
     profiles = await db.get_user_api_profiles(user_id)
@@ -379,7 +389,8 @@ async def manage_email(callback: types.CallbackQuery):
         return
 
     inbox = await db.get_inbox(inbox_id)
-    if not inbox or inbox['user_id'] != user_id:
+    inbox_owner_id = await get_inbox_owner_user_id(inbox_id)
+    if not inbox or inbox_owner_id != user_id:
         await callback.answer("❌ Почтовый ящик не найден")
         return
 
@@ -461,7 +472,8 @@ async def copy_email(callback: types.CallbackQuery):
     user_id = callback.from_user.id
 
     inbox = await db.get_inbox(inbox_id)
-    if not inbox or inbox['user_id'] != user_id:
+    inbox_owner_id = await get_inbox_owner_user_id(inbox_id)
+    if not inbox or inbox_owner_id != user_id:
         await callback.answer("❌ Почтовый ящик не найден")
         return
 
@@ -482,7 +494,8 @@ async def refresh_email(callback: types.CallbackQuery):
         return
 
     inbox = await db.get_inbox(inbox_id)
-    if not inbox or inbox['user_id'] != user_id:
+    inbox_owner_id = await get_inbox_owner_user_id(inbox_id)
+    if not inbox or inbox_owner_id != user_id:
         await callback.answer("❌ Почтовый ящик не найден")
         return
 
@@ -521,7 +534,8 @@ async def read_email(callback: types.CallbackQuery):
     user_id = callback.from_user.id
 
     inbox = await db.get_inbox(inbox_id)
-    if not inbox or inbox['user_id'] != user_id:
+    inbox_owner_id = await get_inbox_owner_user_id(inbox_id)
+    if not inbox or inbox_owner_id != user_id:
         await callback.answer("❌ Почтовый ящик не найден")
         return
 
@@ -570,7 +584,8 @@ async def read_message(callback: types.CallbackQuery):
         return
 
     inbox = await db.get_inbox(message['inbox_id'])
-    if not inbox or inbox['user_id'] != user_id:
+    inbox_owner_id = await get_inbox_owner_user_id(message['inbox_id'])
+    if not inbox or inbox_owner_id != user_id:
         await callback.answer("❌ Доступ запрещен")
         return
 
@@ -662,7 +677,8 @@ async def delete_email_confirm(callback: types.CallbackQuery):
     user_id = callback.from_user.id
 
     inbox = await db.get_inbox(inbox_id)
-    if not inbox or inbox['user_id'] != user_id:
+    inbox_owner_id = await get_inbox_owner_user_id(inbox_id)
+    if not inbox or inbox_owner_id != user_id:
         await callback.answer("❌ Почтовый ящик не найден")
         return
 
@@ -685,14 +701,16 @@ async def confirm_delete_email(callback: types.CallbackQuery):
     user_id = callback.from_user.id
 
     inbox = await db.get_inbox(inbox_id)
-    if not inbox or inbox['user_id'] != user_id:
+    inbox_owner_id = await get_inbox_owner_user_id(inbox_id)
+    if not inbox or inbox_owner_id != user_id:
         await callback.answer("❌ Почтовый ящик не найден")
         return
 
-    user_data = await db.get_user(user_id)
-    if user_data:
+    # Get active profile for API operations
+    active_profile = await db.get_active_profile(user_id)
+    if active_profile:
         try:
-            async with FreeCustomAPIClient(user_data['api_key']) as client:
+            async with FreeCustomAPIClient(active_profile['api_key']) as client:
                 await client.delete_email(inbox['email'])
         except FreeCustomAPIError:
             pass  # Continue with local deletion even if API fails
@@ -849,16 +867,18 @@ async def check_expiring_emails():
 
         for inbox in expiring_inboxes:
             try:
-                if bot:
+                # Get user_id from profile
+                user_id = await get_inbox_owner_user_id(inbox['id'])
+                if user_id and bot:
                     await bot.send_message(
-                        inbox['user_id'],
+                        user_id,
                         f"⚠️ Почта <b>{inbox['email']}</b> скоро истечет!\n\n"
                         f"⏰ Время жизни: {inbox['expires_at'].strftime('%Y-%m-%d %H:%M')}\n\n"
                         f"После истечения срока ящик будет автоматически удален.",
                         parse_mode=ParseMode.HTML
                     )
             except Exception as e:
-                logger.error(f"Failed to send expiry warning to user {inbox['user_id']}: {e}")
+                logger.error(f"Failed to send expiry warning for inbox {inbox['id']}: {e}")
 
     except Exception as e:
         logger.error(f"Error in check_expiring_emails: {e}")
