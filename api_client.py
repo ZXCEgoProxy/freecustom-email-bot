@@ -17,7 +17,10 @@ class FreeCustomAPIClient:
     async def __aenter__(self):
         self.session = aiohttp.ClientSession(
             headers={
+                # Try different auth methods
                 'Authorization': f'Bearer {self.api_key}',
+                'X-API-Key': self.api_key,  # Alternative header
+                'api-key': self.api_key,    # Another alternative
                 'Content-Type': 'application/json'
             }
         )
@@ -34,15 +37,27 @@ class FreeCustomAPIClient:
 
         url = f"{self.base_url}{endpoint}"
 
+        # Try Bearer token first, but also add api_key as query parameter as fallback
+        if 'params' not in kwargs:
+            kwargs['params'] = {}
+        kwargs['params']['api_key'] = self.api_key
+
+        print(f"DEBUG: Making {method} request to {url}")
+        print(f"DEBUG: Headers: {dict(self.session.headers)}")
+        print(f"DEBUG: Params: {kwargs.get('params', {})}")
+
         try:
             async with self.session.request(method, url, **kwargs) as response:
+                print(f"DEBUG: Response status: {response.status}")
+                response_text = await response.text()
+                print(f"DEBUG: Response body: {response_text[:500]}...")
+
                 if response.status == 401:
                     raise FreeCustomAPIError("Invalid API key")
                 elif response.status == 429:
                     raise FreeCustomAPIError("Rate limit exceeded")
                 elif response.status >= 400:
-                    error_text = await response.text()
-                    raise FreeCustomAPIError(f"API error: {response.status} - {error_text}")
+                    raise FreeCustomAPIError(f"API error: {response.status} - {response_text}")
 
                 return await response.json()
         except aiohttp.ClientError as e:
