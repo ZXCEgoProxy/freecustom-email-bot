@@ -37,31 +37,18 @@ class FreeCustomAPIClient:
 
         url = f"{self.base_url}{endpoint}"
 
-        # Choose authentication method based on endpoint
-        if endpoint == '/domains':
-            # Domains works with Bearer token
-            headers = dict(self.session.headers)
-        else:
-            # For email creation, try without Bearer token
-            headers = dict(self.session.headers)
-            if 'Authorization' in headers:
-                del headers['Authorization']  # Remove Bearer token
+        # Use Bearer token for all endpoints (API works with Bearer)
+        headers = dict(self.session.headers)
 
         # Always add api_key as query parameter
         if 'params' not in kwargs:
             kwargs['params'] = {}
         kwargs['params']['api_key'] = self.api_key
 
-        print(f"DEBUG: Making {method} request to {url}")
-        print(f"DEBUG: Headers: {headers}")
-        print(f"DEBUG: Params: {kwargs.get('params', {})}")
-
         # Make request with specific headers
         try:
             async with self.session.request(method, url, headers=headers, **kwargs) as response:
-                print(f"DEBUG: Response status: {response.status}")
                 response_text = await response.text()
-                print(f"DEBUG: Response body: {response_text[:500]}...")
 
                 if response.status == 401:
                     raise FreeCustomAPIError("Invalid API key")
@@ -77,14 +64,13 @@ class FreeCustomAPIClient:
     async def validate_api_key(self) -> bool:
         """Validate API key by making a test request"""
         try:
-            # Try to get account info or domains list as a test
-            # Some APIs might have different endpoints for read vs write operations
-            await self._make_request('GET', '/account')  # Try account info first
+            # Try domains endpoint first (known to work)
+            await self._make_request('GET', '/domains')
             return True
         except FreeCustomAPIError:
             try:
-                # Fallback to domains
-                await self._make_request('GET', '/domains')
+                # Fallback to account endpoint
+                await self._make_request('GET', '/account')
                 return True
             except FreeCustomAPIError:
                 return False
@@ -96,35 +82,30 @@ class FreeCustomAPIClient:
 
     async def create_email(self, domain: Optional[str] = None) -> Dict[str, Any]:
         """Create a new temporary email"""
-        data = {}
-        if domain:
-            data['domain'] = domain
+        # Generate unique email address
+        import time
+        import random
+        import string
 
-        # Try different possible endpoints
-        endpoints_to_try = ['/emails', '/email/create', '/create', '/generate']
+        # Create random username
+        username = ''.join(random.choices(string.ascii_lowercase + string.digits, k=10))
+        if not domain:
+            # Get first available domain if not specified
+            domains = await self.get_domains()
+            if domains:
+                domain = domains[0]['domain']  # Use first available domain
 
-        for endpoint in endpoints_to_try:
-            try:
-                print(f"DEBUG: Trying endpoint {endpoint}")
-                response = await self._make_request('POST', endpoint, json=data)
-                return response
-            except FreeCustomAPIError as e:
-                print(f"DEBUG: Endpoint {endpoint} failed: {e}")
-                continue
+        if not domain:
+            raise FreeCustomAPIError("No domain available for email creation")
 
-        # Try GET request instead of POST (some APIs use GET for generation)
-        try:
-            print("DEBUG: Trying GET request for email generation")
-            params = {'action': 'generate'}
-            if domain:
-                params['domain'] = domain
-            response = await self._make_request('GET', '/emails', params=params)
-            return response
-        except FreeCustomAPIError as e:
-            print(f"DEBUG: GET request failed: {e}")
+        email = f"{username}@{domain}"
+        data = {'inbox': email}
 
-        # If all endpoints failed, raise the last error
-        raise FreeCustomAPIError("All email creation endpoints failed")
+        # Use correct endpoint with Bearer token
+        response = await self._make_request('POST', '/v1/inboxes', json=data)
+        # Add email to response for compatibility
+        response['email'] = email
+        return response
 
     async def get_emails(self, email: str) -> Dict[str, Any]:
         """Get emails for a specific address"""
