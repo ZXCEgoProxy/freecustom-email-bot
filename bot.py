@@ -164,8 +164,10 @@ async def process_api_key(message: types.Message, state: FSMContext):
 
     # Validate API key
     try:
+        logger.info(f"Validating API key for user {user_id}: {api_key[:10]}...")
         async with FreeCustomAPIClient(api_key) as client:
             is_valid = await client.validate_api_key()
+            logger.info(f"API key validation result: {is_valid}")
 
             if is_valid:
                 await db.save_user(user_id, api_key)
@@ -301,8 +303,21 @@ async def create_email_start(callback: types.CallbackQuery, state: FSMContext):
 
     # Try to create email directly
     try:
+        logger.info(f"Creating email for user {user_id} with API key: {user_data['api_key'][:10]}...")
         async with FreeCustomAPIClient(user_data['api_key']) as client:
+            # First validate the API key is still working
+            is_valid = await client.validate_api_key()
+            if not is_valid:
+                logger.error(f"API key validation failed for user {user_id}")
+                await callback.message.edit_text(
+                    "❌ API ключ больше не действителен. Пожалуйста, обновите ключ в настройках.",
+                    reply_markup=get_back_keyboard("change_api_key")
+                )
+                await callback.answer()
+                return
+
             email_data = await client.create_email()
+            logger.info(f"Email created successfully: {email_data}")
 
             # Save to database
             expires_at = FreeCustomAPIClient.parse_expiry_time(email_data.get('expires_in'))
@@ -323,9 +338,10 @@ async def create_email_start(callback: types.CallbackQuery, state: FSMContext):
             )
 
     except FreeCustomAPIError as e:
+        logger.error(f"Failed to create email for user {user_id}: {str(e)}")
         await callback.message.edit_text(
             f"❌ Ошибка создания почты: {str(e)}\n\n"
-            "Попробуйте еще раз.",
+            "Попробуйте еще раз или проверьте API ключ.",
             reply_markup=get_back_keyboard("back_to_main")
         )
 
