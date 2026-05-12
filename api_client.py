@@ -37,32 +37,28 @@ class FreeCustomAPIClient:
 
         url = f"{self.base_url}{endpoint}"
 
-        # For domains endpoint, use Bearer token (it works)
-        # For other endpoints, try different auth methods
+        # Choose authentication method based on endpoint
         if endpoint == '/domains':
-            # Keep Bearer token for domains
-            pass
+            # Domains works with Bearer token
+            headers = dict(self.session.headers)
         else:
-            # For other endpoints, try without Bearer token, just X-API-Key
+            # For email creation, try without Bearer token
             headers = dict(self.session.headers)
             if 'Authorization' in headers:
                 del headers['Authorization']  # Remove Bearer token
-            # Create new session with modified headers for this request
-            temp_session = aiohttp.ClientSession(headers=headers)
-            original_session = self.session
-            self.session = temp_session
 
-        # Try Bearer token first, but also add api_key as query parameter as fallback
+        # Always add api_key as query parameter
         if 'params' not in kwargs:
             kwargs['params'] = {}
         kwargs['params']['api_key'] = self.api_key
 
         print(f"DEBUG: Making {method} request to {url}")
-        print(f"DEBUG: Headers: {dict(self.session.headers)}")
+        print(f"DEBUG: Headers: {headers}")
         print(f"DEBUG: Params: {kwargs.get('params', {})}")
 
+        # Make request with specific headers
         try:
-            async with self.session.request(method, url, **kwargs) as response:
+            async with self.session.request(method, url, headers=headers, **kwargs) as response:
                 print(f"DEBUG: Response status: {response.status}")
                 response_text = await response.text()
                 print(f"DEBUG: Response body: {response_text[:500]}...")
@@ -77,11 +73,6 @@ class FreeCustomAPIClient:
                 return await response.json()
         except aiohttp.ClientError as e:
             raise FreeCustomAPIError(f"Network error: {str(e)}")
-        finally:
-            # Restore original session if we used temp session
-            if endpoint != '/domains' and 'temp_session' in locals():
-                await temp_session.close()
-                self.session = original_session
 
     async def validate_api_key(self) -> bool:
         """Validate API key by making a test request"""
