@@ -470,11 +470,35 @@ async def read_message(callback: types.CallbackQuery):
     # Mark as read
     await db.mark_message_read(message_id)
 
+    # Check if we have full message content, if not - fetch from API
+    body_html = message.get('body_html', '')
+    body_text = message.get('body_text', '')
+
+    if not body_html and not body_text:
+        # Fetch full message content from API
+        user_data = await db.get_user(user_id)
+        if user_data:
+            try:
+                async with FreeCustomAPIClient(user_data['api_key']) as client:
+                    full_message = await client.get_message(inbox['email'], str(message['message_id']))
+                    body_html = full_message.get('html', '')
+                    body_text = full_message.get('text', '')
+
+                    # Update message in database with full content
+                    await db.save_message(message['inbox_id'], {
+                        'id': message['message_id'],
+                        'subject': message.get('subject'),
+                        'from': message.get('sender'),
+                        'date': message.get('received_at'),
+                        'html': body_html,
+                        'text': body_text
+                    })
+            except Exception as e:
+                logger.error(f"Failed to fetch full message content: {e}")
+
     # Format message content
     subject = message.get('subject', 'Без темы')
     sender = message.get('sender', 'Неизвестный')
-    body_html = message.get('body_html', '')
-    body_text = message.get('body_text', '')
 
     text = f"📩 <b>{subject}</b>\n"
     text += f"👤 От: <code>{sender}</code>\n\n"

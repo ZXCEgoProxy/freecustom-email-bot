@@ -11,7 +11,7 @@ class FreeCustomAPIError(Exception):
 class FreeCustomAPIClient:
     def __init__(self, api_key: str):
         self.api_key = api_key
-        self.base_url = Config.API_BASE_URL
+        self.base_url = f"{Config.API_BASE_URL}/v1"  # Add /v1 to base URL
         self.session: Optional[aiohttp.ClientSession] = None
 
     async def __aenter__(self):
@@ -80,6 +80,35 @@ class FreeCustomAPIClient:
         response = await self._make_request('GET', '/domains')
         return response.get('data', [])
 
+    async def get_inboxes(self) -> List[Dict[str, Any]]:
+        """Get list of user's inboxes"""
+        response = await self._make_request('GET', '/inboxes')
+        return response.get('data', [])
+
+    async def delete_inbox(self, email: str) -> bool:
+        """Delete an inbox"""
+        try:
+            await self._make_request('DELETE', f'/inboxes/{email}')
+            return True
+        except FreeCustomAPIError:
+            return False
+
+    async def get_messages(self, email: str, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+        """Get messages for an inbox"""
+        params = {'limit': limit, 'offset': offset}
+        response = await self._make_request('GET', f'/inboxes/{email}/messages', params=params)
+        return response.get('data', [])
+
+    async def get_message(self, email: str, message_id: str) -> Dict[str, Any]:
+        """Get message content"""
+        response = await self._make_request('GET', f'/inboxes/{email}/messages/{message_id}')
+        return response
+
+    async def extract_otp(self, email: str) -> Dict[str, Any]:
+        """Extract OTP code from inbox (paid feature)"""
+        response = await self._make_request('GET', f'/inboxes/{email}/otp')
+        return response
+
     async def create_email(self, domain: Optional[str] = None) -> Dict[str, Any]:
         """Create a new temporary email"""
         # Generate unique email address
@@ -102,28 +131,23 @@ class FreeCustomAPIClient:
         data = {'inbox': email}
 
         # Use correct endpoint with Bearer token
-        response = await self._make_request('POST', '/v1/inboxes', json=data)
+        response = await self._make_request('POST', '/inboxes', json=data)
         # Add email to response for compatibility
         response['email'] = email
         return response
 
+    # Legacy methods for backward compatibility
     async def get_emails(self, email: str) -> Dict[str, Any]:
-        """Get emails for a specific address"""
-        response = await self._make_request('GET', f'/emails/{email}')
-        return response
+        """Get emails for a specific address (legacy)"""
+        return await self.get_inboxes()
 
     async def get_email_messages(self, email: str) -> List[Dict[str, Any]]:
-        """Get all messages for an email"""
-        response = await self._make_request('GET', f'/emails/{email}/messages')
-        return response.get('messages', [])
+        """Get all messages for an email (legacy)"""
+        return await self.get_messages(email)
 
     async def delete_email(self, email: str) -> bool:
-        """Delete an email address"""
-        try:
-            await self._make_request('DELETE', f'/emails/{email}')
-            return True
-        except FreeCustomAPIError:
-            return False
+        """Delete an email address (legacy)"""
+        return await self.delete_inbox(email)
 
     async def extract_otp(self, message_body: str) -> Optional[str]:
         """Extract OTP codes from message body"""

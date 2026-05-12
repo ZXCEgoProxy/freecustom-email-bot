@@ -193,8 +193,8 @@ class SQLiteDatabase(BaseDatabase):
                 message_data.get('subject'),
                 message_data.get('from'),
                 message_data.get('date'),
-                message_data.get('body_html'),
-                message_data.get('body_text')
+                message_data.get('html'),  # API returns 'html' not 'body_html'
+                message_data.get('text')   # API returns 'text' not 'body_text'
             ))
             await db.commit()
 
@@ -399,8 +399,8 @@ class PostgreSQLDatabase(BaseDatabase):
                 message_data.get('subject'),
                 message_data.get('from'),
                 message_data.get('date'),
-                message_data.get('body_html'),
-                message_data.get('body_text')
+                message_data.get('html'),  # API returns 'html' not 'body_html'
+                message_data.get('text')   # API returns 'text' not 'body_text'
             ))
         finally:
             await self._release_connection(conn)
