@@ -96,14 +96,29 @@ class SQLiteDatabase(BaseDatabase):
             ''')
 
             # API Profiles table
-            await db.execute('''
+            await conn.execute('''
                 CREATE TABLE IF NOT EXISTS api_profiles (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL,
                     profile_name TEXT NOT NULL,
                     api_key TEXT NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (user_id) REFERENCES users (user_id)
+                )
+            ''')
+
+            # Messages table to cache emails
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS messages (
+                    id SERIAL PRIMARY KEY,
+                    inbox_id INTEGER NOT NULL REFERENCES inboxes(id) ON DELETE CASCADE,
+                    message_id TEXT NOT NULL,
+                    subject TEXT,
+                    sender TEXT,
+                    received_at TIMESTAMP,
+                    body_html TEXT,
+                    body_text TEXT,
+                    is_read BOOLEAN DEFAULT FALSE
                 )
             ''')
 
@@ -366,6 +381,23 @@ class PostgreSQLDatabase(BaseDatabase):
                 )
             ''')
 
+            # Migrate existing users table if needed
+            try:
+                # Check if api_key column exists and drop it
+                await conn.execute('''
+                    ALTER TABLE users DROP COLUMN IF EXISTS api_key
+                ''')
+            except Exception:
+                pass  # Column might not exist
+
+            try:
+                # Add active_profile_id column if it doesn't exist
+                await conn.execute('''
+                    ALTER TABLE users ADD COLUMN IF NOT EXISTS active_profile_id INTEGER
+                ''')
+            except Exception:
+                pass
+
             # Inboxes table
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS inboxes (
@@ -378,6 +410,31 @@ class PostgreSQLDatabase(BaseDatabase):
                     status TEXT DEFAULT 'active'
                 )
             ''')
+
+            # Migrate existing inboxes table if needed
+            try:
+                # Drop old foreign key if exists
+                await conn.execute('''
+                    ALTER TABLE inboxes DROP CONSTRAINT IF EXISTS inboxes_user_id_fkey
+                ''')
+            except Exception:
+                pass
+
+            try:
+                # Add profile_id column if it doesn't exist
+                await conn.execute('''
+                    ALTER TABLE inboxes ADD COLUMN IF NOT EXISTS profile_id INTEGER
+                ''')
+            except Exception:
+                pass
+
+            try:
+                # Drop old user_id column if exists
+                await conn.execute('''
+                    ALTER TABLE inboxes DROP COLUMN IF EXISTS user_id
+                ''')
+            except Exception:
+                pass
 
             # Messages table
             await conn.execute('''
