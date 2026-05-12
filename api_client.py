@@ -37,6 +37,21 @@ class FreeCustomAPIClient:
 
         url = f"{self.base_url}{endpoint}"
 
+        # For domains endpoint, use Bearer token (it works)
+        # For other endpoints, try different auth methods
+        if endpoint == '/domains':
+            # Keep Bearer token for domains
+            pass
+        else:
+            # For other endpoints, try without Bearer token, just X-API-Key
+            headers = dict(self.session.headers)
+            if 'Authorization' in headers:
+                del headers['Authorization']  # Remove Bearer token
+            # Create new session with modified headers for this request
+            temp_session = aiohttp.ClientSession(headers=headers)
+            original_session = self.session
+            self.session = temp_session
+
         # Try Bearer token first, but also add api_key as query parameter as fallback
         if 'params' not in kwargs:
             kwargs['params'] = {}
@@ -62,15 +77,26 @@ class FreeCustomAPIClient:
                 return await response.json()
         except aiohttp.ClientError as e:
             raise FreeCustomAPIError(f"Network error: {str(e)}")
+        finally:
+            # Restore original session if we used temp session
+            if endpoint != '/domains' and 'temp_session' in locals():
+                await temp_session.close()
+                self.session = original_session
 
     async def validate_api_key(self) -> bool:
         """Validate API key by making a test request"""
         try:
-            # Try to get domains list as a test
-            await self._make_request('GET', '/domains')
+            # Try to get account info or domains list as a test
+            # Some APIs might have different endpoints for read vs write operations
+            await self._make_request('GET', '/account')  # Try account info first
             return True
         except FreeCustomAPIError:
-            return False
+            try:
+                # Fallback to domains
+                await self._make_request('GET', '/domains')
+                return True
+            except FreeCustomAPIError:
+                return False
 
     async def get_domains(self) -> List[str]:
         """Get available domains"""
@@ -83,8 +109,31 @@ class FreeCustomAPIClient:
         if domain:
             data['domain'] = domain
 
-        response = await self._make_request('POST', '/emails', json=data)
-        return response
+        # Try different possible endpoints
+        endpoints_to_try = ['/emails', '/email/create', '/create', '/generate']
+
+        for endpoint in endpoints_to_try:
+            try:
+                print(f"DEBUG: Trying endpoint {endpoint}")
+                response = await self._make_request('POST', endpoint, json=data)
+                return response
+            except FreeCustomAPIError as e:
+                print(f"DEBUG: Endpoint {endpoint} failed: {e}")
+                continue
+
+        # Try GET request instead of POST (some APIs use GET for generation)
+        try:
+            print("DEBUG: Trying GET request for email generation")
+            params = {'action': 'generate'}
+            if domain:
+                params['domain'] = domain
+            response = await self._make_request('GET', '/emails', params=params)
+            return response
+        except FreeCustomAPIError as e:
+            print(f"DEBUG: GET request failed: {e}")
+
+        # If all endpoints failed, raise the last error
+        raise FreeCustomAPIError("All email creation endpoints failed")
 
     async def get_emails(self, email: str) -> Dict[str, Any]:
         """Get emails for a specific address"""
