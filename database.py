@@ -360,8 +360,9 @@ class PostgreSQLDatabase(BaseDatabase):
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS users (
                     user_id BIGINT PRIMARY KEY,
-                    api_key TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    active_profile_id INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (active_profile_id) REFERENCES api_profiles (id)
                 )
             ''')
 
@@ -369,7 +370,7 @@ class PostgreSQLDatabase(BaseDatabase):
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS inboxes (
                     id SERIAL PRIMARY KEY,
-                    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+                    profile_id INTEGER NOT NULL REFERENCES api_profiles(id) ON DELETE CASCADE,
                     email TEXT NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     expires_at TIMESTAMP,
