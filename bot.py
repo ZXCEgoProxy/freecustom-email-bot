@@ -155,16 +155,28 @@ async def show_api_profiles(message_or_callback, user_id: int):
 
         for profile in profiles:
             status = "✅" if active_profile and active_profile['id'] == profile['id'] else "⚪"
+
+            # Get inbox count for this profile
+            inboxes = await db.get_profile_inboxes(profile['id'])
+            inbox_count = len(inboxes)
+
             text += f"{status} <b>{profile['profile_name']}</b>\n"
             text += f"   🔑 {profile['api_key'][:10]}...{profile['api_key'][-4:]}\n"
+            text += f"   📧 Почт: {inbox_count}\n"
             text += f"   📅 {profile['created_at'].strftime('%Y-%m-%d %H:%M')}\n\n"
 
-            # Buttons for each profile: select, edit, delete
+            # Buttons for each profile: select, view emails, edit, delete
             keyboard.append([
                 types.InlineKeyboardButton(
                     text=f"🎯 Выбрать",
                     callback_data=f"select_profile:{profile['id']}"
                 ),
+                types.InlineKeyboardButton(
+                    text=f"📬 Почты ({inbox_count})",
+                    callback_data=f"view_profile_emails:{profile['id']}"
+                )
+            ])
+            keyboard.append([
                 types.InlineKeyboardButton(
                     text=f"✏️ Изменить",
                     callback_data=f"edit_profile:{profile['id']}"
@@ -201,11 +213,16 @@ async def cmd_start(message: types.Message, state: FSMContext):
 
     if active_profile:
         # User has active profile, show main menu
+        inboxes = await db.get_profile_inboxes(active_profile['id'])
+        inbox_count = len(inboxes)
+
         await message.answer(
             f"👋 Добро пожаловать в FreeCustom Email Manager!\n\n"
-            f"🔑 Активный профиль: <b>{active_profile['profile_name']}</b>\n\n"
+            f"🔑 Активный профиль: <b>{active_profile['profile_name']}</b>\n"
+            f"📧 Доступно почтовых ящиков: <b>{inbox_count}</b>\n\n"
             f"Выберите действие:",
-            reply_markup=get_main_menu_keyboard()
+            reply_markup=get_main_menu_keyboard(),
+            parse_mode=ParseMode.HTML
         )
     else:
         # User needs to set up API profile
@@ -851,9 +868,10 @@ async def show_help(callback: types.CallbackQuery):
 <b>Как использовать:</b>
 1. Получите API ключ на freecustom.email
 2. Добавьте API профиль через меню "🔑 Добавить API"
-3. Создавайте почтовые ящики и используйте их для регистрации
-4. Проверяйте входящие письма через бота
-5. Управляйте профилями в меню "👤 Профили API"
+3. Выберите активный профиль для работы
+4. Создавайте почтовые ящики и используйте их для регистрации
+5. Просматривайте почты по профилям в "👤 Профили API"
+6. Проверяйте последние письма для каждой почты
 
 <b>Команды:</b>
 /start - Запуск бота и настройка
@@ -886,11 +904,117 @@ async def select_profile(callback: types.CallbackQuery):
 
     await db.set_active_profile(user_id, profile_id)
 
+    # Get inbox count for this profile
+    inboxes = await db.get_profile_inboxes(profile_id)
+    inbox_count = len(inboxes)
+
+    keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
+        [types.InlineKeyboardButton(text="📬 Управлять почтами", callback_data="list_emails")],
+        [types.InlineKeyboardButton(text="➕ Создать новую почту", callback_data="create_email")],
+        [types.InlineKeyboardButton(text="🔙 К профилям", callback_data="api_profiles")]
+    ])
+
     await callback.message.edit_text(
         f"✅ Активный профиль изменен на: <b>{profile['profile_name']}</b>\n\n"
+        f"📧 Доступно почтовых ящиков: {inbox_count}\n\n"
         f"Теперь все операции будут использовать этот API ключ.",
-        reply_markup=get_back_keyboard("api_profiles")
+        reply_markup=keyboard,
+        parse_mode=ParseMode.HTML
     )
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data.startswith("check_recent_messages:"))
+async def check_recent_messages(callback: types.CallbackQuery):
+    """Check and display recent messages for an inbox"""
+    inbox_id = int(callback.data.split(":")[1])
+    user_id = callback.from_user.id
+
+    inbox = await db.get_inbox(inbox_id)
+    inbox_owner_id = await get_inbox_owner_user_id(inbox_id)
+    if not inbox or inbox_owner_id != user_id:
+        await callback.answer("❌ Почтовый ящик не найден")
+        return
+
+    # Get inbox owner profile for API operations
+    profile = await db.get_api_profile(inbox['profile_id'])
+    if not profile:
+        await callback.answer("❌ Профиль не найден")
+        return
+
+    try:
+        # Fetch recent messages from API
+        async with FreeCustomAPIClient(profile['api_key']) as client:
+            messages_data = await client.get_messages(inbox['email'], limit=5, offset=0)
+
+            # Save new messages to database
+            for msg_data in messages_data:
+                await db.save_message(inbox_id, msg_data)
+
+        # Get messages from database (including newly fetched)
+        messages = await db.get_inbox_messages(inbox_id)
+        recent_messages = messages[:5]  # Show last 5 messages
+
+        if not recent_messages:
+            await callback.message.edit_text(
+                f"📭 В почтовом ящике <b>{inbox['email']}</b> пока нет писем.\n\n"
+                f"Попробуйте позже или используйте этот адрес для регистрации.",
+                reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
+                    [types.InlineKeyboardButton(text="🔄 Проверить снова", callback_data=f"check_recent_messages:{inbox_id}")],
+                    [types.InlineKeyboardButton(text="🔙 Назад", callback_data=f"view_profile_emails:{inbox['profile_id']}")]
+                ]),
+                parse_mode=ParseMode.HTML
+            )
+            await callback.answer()
+            return
+
+        text = f"📨 Последние письма в <b>{inbox['email']}</b>:\n\n"
+
+        keyboard = []
+        for msg in recent_messages:
+            status = "✅" if msg['is_read'] else "📧"
+            subject = msg.get('subject', 'Без темы')[:30]
+            sender = msg.get('sender', 'Неизвестный')[:20]
+            received_at = msg.get('received_at')
+
+            text += f"{status} <b>{subject}</b>\n"
+            text += f"   👤 {sender}\n"
+            if received_at:
+                if isinstance(received_at, str):
+                    text += f"   🕒 {received_at[:19]}\n"
+                else:
+                    text += f"   🕒 {received_at.strftime('%Y-%m-%d %H:%M')}\n"
+            text += "\n"
+
+            # Button to read full message
+            keyboard.append([
+                types.InlineKeyboardButton(
+                    text=f"📖 {subject[:20]}...",
+                    callback_data=f"read_message:{msg['id']}"
+                )
+            ])
+
+        keyboard.append([
+            types.InlineKeyboardButton(text="🔄 Обновить", callback_data=f"check_recent_messages:{inbox_id}"),
+            types.InlineKeyboardButton(text="🔙 Назад", callback_data=f"view_profile_emails:{inbox['profile_id']}")
+        ])
+
+        await callback.message.edit_text(
+            text,
+            reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
+            parse_mode=ParseMode.HTML
+        )
+
+    except FreeCustomAPIError as e:
+        await callback.message.edit_text(
+            f"❌ Ошибка при проверке почты <b>{inbox['email']}</b>:\n\n{str(e)}\n\n"
+            f"Возможно, API ключ истек или сервис недоступен.",
+            reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
+                [types.InlineKeyboardButton(text="🔄 Попробовать снова", callback_data=f"check_recent_messages:{inbox_id}")],
+                [types.InlineKeyboardButton(text="🔙 Назад", callback_data=f"view_profile_emails:{inbox['profile_id']}")]
+            ]),
+            parse_mode=ParseMode.HTML
+        )
+
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "manage_profiles")
@@ -909,6 +1033,62 @@ async def quick_add_api_start(callback: types.CallbackQuery, state: FSMContext):
         parse_mode=ParseMode.HTML
     )
     await state.set_state(APIKeySetup.waiting_for_key)
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data.startswith("view_profile_emails:"))
+async def view_profile_emails(callback: types.CallbackQuery):
+    """View all emails for a specific profile"""
+    profile_id = int(callback.data.split(":")[1])
+    user_id = callback.from_user.id
+
+    # Verify profile belongs to user
+    profile = await db.get_api_profile(profile_id)
+    if not profile or profile['user_id'] != user_id:
+        await callback.answer("❌ Профиль не найден")
+        return
+
+    inboxes = await db.get_profile_inboxes(profile_id)
+
+    if not inboxes:
+        await callback.message.edit_text(
+            f"📭 В профиле <b>{profile['profile_name']}</b> пока нет почтовых ящиков.\n\n"
+            f"Выберите этот профиль и создайте первую почту.",
+            reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
+                [types.InlineKeyboardButton(text="🎯 Выбрать профиль", callback_data=f"select_profile:{profile_id}")],
+                [types.InlineKeyboardButton(text="🔙 Назад", callback_data="api_profiles")]
+            ]),
+            parse_mode=ParseMode.HTML
+        )
+        await callback.answer()
+        return
+
+    text = f"📬 Почтовые ящики профиля <b>{profile['profile_name']}</b>:\n\n"
+
+    keyboard = []
+    for inbox in inboxes:
+        # Get message count for this inbox
+        messages = await db.get_inbox_messages(inbox['id'])
+        message_count = len(messages)
+
+        text += f"📧 <b>{inbox['email']}</b>\n"
+        text += f"   📨 Писем: {message_count}\n"
+        text += f"   📅 Создан: {inbox['created_at'].strftime('%Y-%m-%d %H:%M')}\n\n"
+
+        # Button to check recent messages
+        keyboard.append([
+            types.InlineKeyboardButton(
+                text=f"📨 Проверить ({message_count})",
+                callback_data=f"check_recent_messages:{inbox['id']}"
+            )
+        ])
+
+    keyboard.append([types.InlineKeyboardButton(text="🔙 К профилям", callback_data="api_profiles")])
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
+        parse_mode=ParseMode.HTML
+    )
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data.startswith("edit_profile:"))
