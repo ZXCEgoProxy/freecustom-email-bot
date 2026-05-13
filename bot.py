@@ -32,6 +32,7 @@ class APIKeySetup(StatesGroup):
     waiting_for_key = State()
     waiting_for_profile_name = State()
     waiting_for_profile_key = State()
+    waiting_for_profile_rename = State()
 
 class EmailManagement(StatesGroup):
     waiting_for_domain = State()
@@ -117,8 +118,6 @@ def get_message_actions_keyboard(message_id: int, inbox_id: int) -> types.Inline
 def get_api_profiles_keyboard() -> types.InlineKeyboardMarkup:
     """API profiles management keyboard"""
     keyboard = [
-        [types.InlineKeyboardButton(text="➕ Добавить профиль", callback_data="add_api_profile")],
-        [types.InlineKeyboardButton(text="🔄 Выбрать активный", callback_data="select_active_profile")],
         [types.InlineKeyboardButton(text="⚙️ Управление профилями", callback_data="manage_profiles")],
         [types.InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ]
@@ -157,11 +156,19 @@ async def show_api_profiles(message_or_callback, user_id: int):
             text += f"   🔑 {profile['api_key'][:10]}...{profile['api_key'][-4:]}\n"
             text += f"   📅 {profile['created_at'].strftime('%Y-%m-%d %H:%M')}\n\n"
 
-            # Button to select this profile
+            # Buttons for each profile: select, edit, delete
             keyboard.append([
                 types.InlineKeyboardButton(
-                    text=f"🎯 Выбрать {profile['profile_name']}",
+                    text=f"🎯 Выбрать",
                     callback_data=f"select_profile:{profile['id']}"
+                ),
+                types.InlineKeyboardButton(
+                    text=f"✏️ Изменить",
+                    callback_data=f"edit_profile:{profile['id']}"
+                ),
+                types.InlineKeyboardButton(
+                    text=f"🗑 Удалить",
+                    callback_data=f"delete_profile:{profile['id']}"
                 )
             ])
 
@@ -300,6 +307,44 @@ async def process_profile_key(message: types.Message, state: FSMContext):
                 await message.answer("❌ Неверный API ключ. Проверьте ключ и попробуйте еще раз:")
     except Exception as e:
         await message.answer(f"❌ Ошибка валидации ключа: {str(e)}\n\nПопробуйте еще раз:")
+
+@dp.message(APIKeySetup.waiting_for_profile_rename)
+async def process_profile_rename(message: types.Message, state: FSMContext):
+    """Process profile name change"""
+    user_id = message.from_user.id
+    new_name = message.text.strip()
+    state_data = await state.get_data()
+    profile_id = state_data.get('profile_id')
+
+    if not new_name:
+        await message.answer("❌ Название не может быть пустым. Попробуйте еще раз:")
+        return
+
+    if not profile_id:
+        await message.answer("❌ Ошибка: профиль не найден. Попробуйте еще раз.")
+        await state.clear()
+        return
+
+    # Verify profile belongs to user
+    profile = await db.get_api_profile(profile_id)
+    if not profile or profile['user_id'] != user_id:
+        await message.answer("❌ Профиль не найден.")
+        await state.clear()
+        return
+
+    # Update profile name
+    try:
+        await db.update_api_profile_name(profile_id, new_name)
+        await message.answer(
+            f"✅ Название профиля изменено!\n\n"
+            f"<b>{state_data.get('current_name', 'Старое название')}</b> → <b>{new_name}</b>",
+            reply_markup=get_main_menu_keyboard(),
+            parse_mode=ParseMode.HTML
+        )
+        await state.clear()
+    except Exception as e:
+        await message.answer(f"❌ Ошибка при изменении названия: {str(e)}")
+        await state.clear()
 
 # Callback query handlers
 @dp.callback_query(lambda c: c.data == "back_to_main")
@@ -825,6 +870,112 @@ async def select_profile(callback: types.CallbackQuery):
         f"✅ Активный профиль изменен на: <b>{profile['profile_name']}</b>\n\n"
         f"Теперь все операции будут использовать этот API ключ.",
         reply_markup=get_back_keyboard("api_profiles")
+    )
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "manage_profiles")
+async def manage_profiles(callback: types.CallbackQuery):
+    """Show profiles management menu"""
+    await show_api_profiles(callback, callback.from_user.id)
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data.startswith("edit_profile:"))
+async def edit_profile_start(callback: types.CallbackQuery, state: FSMContext):
+    """Start editing profile name"""
+    profile_id = int(callback.data.split(":")[1])
+    user_id = callback.from_user.id
+
+    # Verify profile belongs to user
+    profile = await db.get_api_profile(profile_id)
+    if not profile or profile['user_id'] != user_id:
+        await callback.answer("❌ Профиль не найден")
+        return
+
+    # Store profile_id in state
+    await state.update_data(profile_id=profile_id, current_name=profile['profile_name'])
+
+    await callback.message.edit_text(
+        f"✏️ Изменение названия профиля\n\n"
+        f"Текущее название: <b>{profile['profile_name']}</b>\n\n"
+        f"Введите новое название профиля:",
+        parse_mode=ParseMode.HTML
+    )
+    await state.set_state(APIKeySetup.waiting_for_profile_rename)
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data.startswith("delete_profile:"))
+async def delete_profile_confirm(callback: types.CallbackQuery):
+    """Confirm profile deletion"""
+    profile_id = int(callback.data.split(":")[1])
+    user_id = callback.from_user.id
+
+    # Verify profile belongs to user
+    profile = await db.get_api_profile(profile_id)
+    if not profile or profile['user_id'] != user_id:
+        await callback.answer("❌ Профиль не найден")
+        return
+
+    # Check if this is the only profile
+    all_profiles = await db.get_user_api_profiles(user_id)
+    if len(all_profiles) <= 1:
+        await callback.message.edit_text(
+            "❌ Нельзя удалить единственный API профиль!\n\n"
+            "Добавьте другой профиль перед удалением этого.",
+            reply_markup=get_back_keyboard("api_profiles")
+        )
+        await callback.answer()
+        return
+
+    keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
+        [types.InlineKeyboardButton(text="✅ Да, удалить профиль", callback_data=f"confirm_delete_profile:{profile_id}")],
+        [types.InlineKeyboardButton(text="❌ Отмена", callback_data="api_profiles")]
+    ])
+
+    # Count inboxes for this profile
+    inboxes = await db.get_profile_inboxes(profile_id)
+    inbox_count = len(inboxes)
+
+    warning_text = f"🗑 Удаление профиля <b>{profile['profile_name']}</b>\n\n"
+    if inbox_count > 0:
+        warning_text += f"⚠️ Внимание: будут удалены {inbox_count} почтовых ящиков!\n\n"
+    warning_text += "Это действие нельзя отменить. Продолжить?"
+
+    await callback.message.edit_text(
+        warning_text,
+        reply_markup=keyboard,
+        parse_mode=ParseMode.HTML
+    )
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data.startswith("confirm_delete_profile:"))
+async def confirm_delete_profile(callback: types.CallbackQuery):
+    """Actually delete the profile"""
+    profile_id = int(callback.data.split(":")[1])
+    user_id = callback.from_user.id
+
+    # Verify profile belongs to user
+    profile = await db.get_api_profile(profile_id)
+    if not profile or profile['user_id'] != user_id:
+        await callback.answer("❌ Профиль не найден")
+        return
+
+    # Check if this profile is currently active
+    active_profile = await db.get_active_profile(user_id)
+    was_active = active_profile and active_profile['id'] == profile_id
+
+    # Delete the profile (CASCADE will handle related data)
+    await db.delete_api_profile(profile_id)
+
+    # If this was the active profile, set another profile as active
+    if was_active:
+        remaining_profiles = await db.get_user_api_profiles(user_id)
+        if remaining_profiles:
+            await db.set_active_profile(user_id, remaining_profiles[0]['id'])
+
+    await callback.message.edit_text(
+        f"✅ Профиль <b>{profile['profile_name']}</b> успешно удален.",
+        reply_markup=get_back_keyboard("api_profiles"),
+        parse_mode=ParseMode.HTML
     )
     await callback.answer()
 

@@ -69,6 +69,9 @@ class BaseDatabase:
     async def get_api_profile(self, profile_id: int) -> Optional[Dict[str, Any]]:
         raise NotImplementedError
 
+    async def update_api_profile_name(self, profile_id: int, new_name: str):
+        raise NotImplementedError
+
     async def delete_api_profile(self, profile_id: int):
         raise NotImplementedError
 
@@ -325,6 +328,12 @@ class SQLiteDatabase(BaseDatabase):
             async with db.execute('SELECT * FROM api_profiles WHERE id = ?', (profile_id,)) as cursor:
                 row = await cursor.fetchone()
                 return dict(row) if row else None
+
+    async def update_api_profile_name(self, profile_id: int, new_name: str):
+        """Update API profile name"""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute('UPDATE api_profiles SET profile_name = ? WHERE id = ?', (new_name, profile_id))
+            await db.commit()
 
     async def delete_api_profile(self, profile_id: int):
         """Delete API profile and all related data"""
@@ -728,6 +737,14 @@ class PostgreSQLDatabase(BaseDatabase):
         try:
             row = await conn.fetchrow('SELECT * FROM api_profiles WHERE id = $1', profile_id)
             return dict(row) if row else None
+        finally:
+            await self._release_connection(conn)
+
+    async def update_api_profile_name(self, profile_id: int, new_name: str):
+        """Update API profile name"""
+        conn = await self._get_connection()
+        try:
+            await conn.execute('UPDATE api_profiles SET profile_name = $1 WHERE id = $2', new_name, profile_id)
         finally:
             await self._release_connection(conn)
 
