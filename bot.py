@@ -92,7 +92,10 @@ def get_main_menu_keyboard() -> types.InlineKeyboardMarkup:
     keyboard = [
         [types.InlineKeyboardButton(text="📬 Мои почты", callback_data="list_emails")],
         [types.InlineKeyboardButton(text="➕ Создать новую почту", callback_data="create_email")],
-        [types.InlineKeyboardButton(text="👤 Профили API", callback_data="api_profiles")],
+        [
+            types.InlineKeyboardButton(text="🔑 Добавить API", callback_data="quick_add_api"),
+            types.InlineKeyboardButton(text="👤 Профили API", callback_data="api_profiles")
+        ],
         [types.InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")]
     ]
     return types.InlineKeyboardMarkup(inline_keyboard=keyboard)
@@ -238,9 +241,24 @@ async def process_api_key(message: types.Message, state: FSMContext):
             logger.info(f"API key validation result: {is_valid}")
 
             if is_valid:
-                # Create default profile
-                profile_id = await db.save_api_profile(user_id, "Мой профиль", api_key)
-                await db.set_active_profile(user_id, profile_id)
+                # Check existing profiles to generate unique name
+                existing_profiles = await db.get_user_api_profiles(user_id)
+                profile_names = [p['profile_name'] for p in existing_profiles]
+
+                # Generate unique profile name
+                base_name = "Мой профиль"
+                profile_name = base_name
+                counter = 2
+                while profile_name in profile_names:
+                    profile_name = f"{base_name} {counter}"
+                    counter += 1
+
+                profile_id = await db.save_api_profile(user_id, profile_name, api_key)
+
+                # Set as active if it's the first profile or if no active profile exists
+                active_profile = await db.get_active_profile(user_id)
+                if not active_profile:
+                    await db.set_active_profile(user_id, profile_id)
 
                 await message.answer(
                     "✅ API профиль успешно создан!\n\n"
@@ -823,6 +841,7 @@ async def show_help(callback: types.CallbackQuery):
 Этот бот позволяет управлять временными почтовыми ящиками через API сервиса FreeCustom.Email.
 
 <b>Основные функции:</b>
+🔑 Управление API профилями (несколько аккаунтов)
 📧 Создание временных email адресов
 📨 Получение и чтение входящих писем
 🤖 Автоматическое извлечение OTP кодов
@@ -831,9 +850,10 @@ async def show_help(callback: types.CallbackQuery):
 
 <b>Как использовать:</b>
 1. Получите API ключ на freecustom.email
-2. Отправьте /start и настройте ключ
+2. Добавьте API профиль через меню "🔑 Добавить API"
 3. Создавайте почтовые ящики и используйте их для регистрации
 4. Проверяйте входящие письма через бота
+5. Управляйте профилями в меню "👤 Профили API"
 
 <b>Команды:</b>
 /start - Запуск бота и настройка
@@ -877,6 +897,18 @@ async def select_profile(callback: types.CallbackQuery):
 async def manage_profiles(callback: types.CallbackQuery):
     """Show profiles management menu"""
     await show_api_profiles(callback, callback.from_user.id)
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "quick_add_api")
+async def quick_add_api_start(callback: types.CallbackQuery, state: FSMContext):
+    """Quick add API key without profile name"""
+    await callback.message.edit_text(
+        "🔑 <b>Быстрое добавление API ключа</b>\n\n"
+        "Отправьте API ключ от FreeCustom.Email.\n"
+        "Профиль будет создан автоматически.",
+        parse_mode=ParseMode.HTML
+    )
+    await state.set_state(APIKeySetup.waiting_for_key)
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data.startswith("edit_profile:"))
