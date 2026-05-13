@@ -87,17 +87,38 @@ def format_message_preview(message: Dict[str, Any]) -> str:
     return text
 
 # Keyboard functions
-def get_main_menu_keyboard() -> types.InlineKeyboardMarkup:
+async def get_main_menu_keyboard_with_profile(user_id: int) -> types.InlineKeyboardMarkup:
+    """Main menu keyboard with active profile info"""
+    active_profile = await db.get_active_profile(user_id)
+    inbox_count = 0
+
+    if active_profile:
+        inboxes = await db.get_profile_inboxes(active_profile['id'])
+        inbox_count = len(inboxes)
+
+    return get_main_menu_keyboard(active_profile, inbox_count)
+
+def get_main_menu_keyboard(active_profile=None, inbox_count=0) -> types.InlineKeyboardMarkup:
     """Main menu keyboard"""
-    keyboard = [
+    keyboard = []
+
+    # Show active profile info if available
+    if active_profile:
+        profile_text = f"🔑 {active_profile['profile_name']} (📧 {inbox_count})"
+        keyboard.append([types.InlineKeyboardButton(text=profile_text, callback_data="switch_profile")])
+
+    keyboard.extend([
         [types.InlineKeyboardButton(text="📬 Мои почты", callback_data="list_emails")],
         [types.InlineKeyboardButton(text="➕ Создать новую почту", callback_data="create_email")],
         [
-            types.InlineKeyboardButton(text="🔑 Добавить API", callback_data="quick_add_api"),
+            types.InlineKeyboardButton(text="🔄 Переключить API", callback_data="switch_profile"),
             types.InlineKeyboardButton(text="👤 Профили API", callback_data="api_profiles")
         ],
-        [types.InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")]
-    ]
+        [
+            types.InlineKeyboardButton(text="🔑 Добавить API", callback_data="quick_add_api"),
+            types.InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")
+        ]
+    ])
     return types.InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 def get_email_actions_keyboard(inbox_id: int) -> types.InlineKeyboardMarkup:
@@ -221,7 +242,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
             f"🔑 Активный профиль: <b>{active_profile['profile_name']}</b>\n"
             f"📧 Доступно почтовых ящиков: <b>{inbox_count}</b>\n\n"
             f"Выберите действие:",
-            reply_markup=get_main_menu_keyboard(),
+            reply_markup=get_main_menu_keyboard(active_profile, inbox_count),
             parse_mode=ParseMode.HTML
         )
     else:
@@ -277,10 +298,15 @@ async def process_api_key(message: types.Message, state: FSMContext):
                 if not active_profile:
                     await db.set_active_profile(user_id, profile_id)
 
+                # Get updated profile info for menu
+                updated_active_profile = await db.get_active_profile(user_id)
+                updated_inboxes = await db.get_profile_inboxes(profile_id)
+                updated_inbox_count = len(updated_inboxes)
+
                 await message.answer(
                     "✅ API профиль успешно создан!\n\n"
                     "Теперь вы можете управлять временными почтовыми ящиками.",
-                    reply_markup=get_main_menu_keyboard()
+                    reply_markup=get_main_menu_keyboard(updated_active_profile, updated_inbox_count)
                 )
                 await state.clear()
             else:
@@ -331,10 +357,15 @@ async def process_profile_key(message: types.Message, state: FSMContext):
                 if len(profiles) == 1:
                     await db.set_active_profile(user_id, profile_id)
 
+                # Get updated profile info for menu
+                updated_active_profile = await db.get_active_profile(user_id)
+                updated_inboxes = await db.get_profile_inboxes(profile_id)
+                updated_inbox_count = len(updated_inboxes)
+
                 await message.answer(
                     f"✅ API профиль <b>{profile_name}</b> успешно создан!\n\n"
                     "Теперь вы можете переключаться между профилями.",
-                    reply_markup=get_main_menu_keyboard(),
+                    reply_markup=get_main_menu_keyboard(updated_active_profile, updated_inbox_count),
                     parse_mode=ParseMode.HTML
                 )
                 await state.clear()
@@ -370,10 +401,18 @@ async def process_profile_rename(message: types.Message, state: FSMContext):
     # Update profile name
     try:
         await db.update_api_profile_name(profile_id, new_name)
+        # Get updated profile info for menu
+        updated_active_profile = await db.get_active_profile(user_id)
+        updated_inboxes = []
+        updated_inbox_count = 0
+        if updated_active_profile:
+            updated_inboxes = await db.get_profile_inboxes(updated_active_profile['id'])
+            updated_inbox_count = len(updated_inboxes)
+
         await message.answer(
             f"✅ Название профиля изменено!\n\n"
             f"<b>{state_data.get('current_name', 'Старое название')}</b> → <b>{new_name}</b>",
-            reply_markup=get_main_menu_keyboard(),
+            reply_markup=get_main_menu_keyboard(updated_active_profile, updated_inbox_count),
             parse_mode=ParseMode.HTML
         )
         await state.clear()
@@ -385,9 +424,12 @@ async def process_profile_rename(message: types.Message, state: FSMContext):
 @dp.callback_query(lambda c: c.data == "back_to_main")
 async def back_to_main(callback: types.CallbackQuery):
     """Back to main menu"""
+    user_id = callback.from_user.id
+    menu_keyboard = await get_main_menu_keyboard_with_profile(user_id)
+
     await callback.message.edit_text(
         "Выберите действие:",
-        reply_markup=get_main_menu_keyboard()
+        reply_markup=menu_keyboard
     )
     await callback.answer()
 
@@ -867,11 +909,11 @@ async def show_help(callback: types.CallbackQuery):
 
 <b>Как использовать:</b>
 1. Получите API ключ на freecustom.email
-2. Добавьте API профиль через меню "🔑 Добавить API"
-3. Выберите активный профиль для работы
-4. Создавайте почтовые ящики и используйте их для регистрации
-5. Просматривайте почты по профилям в "👤 Профили API"
-6. Проверяйте последние письма для каждой почты
+2. Добавьте API профиль через "🔑 Добавить API"
+3. Переключайтесь между профилями через "🔄 Переключить API"
+4. Создавайте почтовые ящики (каждый профиль имеет свои почты)
+5. Управляйте почтами в "📬 Мои почты" (активного профиля)
+6. Просматривайте все профили и их почты в "👤 Профили API"
 
 <b>Команды:</b>
 /start - Запуск бота и настройка
@@ -1021,6 +1063,56 @@ async def check_recent_messages(callback: types.CallbackQuery):
 async def manage_profiles(callback: types.CallbackQuery):
     """Show profiles management menu"""
     await show_api_profiles(callback, callback.from_user.id)
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "switch_profile")
+async def switch_profile_menu(callback: types.CallbackQuery):
+    """Show profile switching menu"""
+    user_id = callback.from_user.id
+    profiles = await db.get_user_api_profiles(user_id)
+    active_profile = await db.get_active_profile(user_id)
+
+    if not profiles:
+        await callback.message.edit_text(
+            "❌ У вас нет API профилей.\n\n"
+            "Сначала добавьте хотя бы один профиль.",
+            reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
+                [types.InlineKeyboardButton(text="🔑 Добавить API", callback_data="quick_add_api")],
+                [types.InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
+            ])
+        )
+        await callback.answer()
+        return
+
+    text = "🔄 <b>Переключение API профиля</b>\n\n"
+    text += "Выберите профиль для работы:\n\n"
+
+    keyboard = []
+    for profile in profiles:
+        status = "✅ АКТИВНЫЙ" if active_profile and active_profile['id'] == profile['id'] else "⚪"
+
+        # Get inbox count for this profile
+        inboxes = await db.get_profile_inboxes(profile['id'])
+        inbox_count = len(inboxes)
+
+        text += f"{status} <b>{profile['profile_name']}</b>\n"
+        text += f"   📧 Почт: {inbox_count} | 🔑 ...{profile['api_key'][-4:]}\n\n"
+
+        # Button to switch to this profile
+        keyboard.append([
+            types.InlineKeyboardButton(
+                text=f"🎯 Выбрать {profile['profile_name']}",
+                callback_data=f"select_profile:{profile['id']}"
+            )
+        ])
+
+    keyboard.append([types.InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")])
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
+        parse_mode=ParseMode.HTML
+    )
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "quick_add_api")
