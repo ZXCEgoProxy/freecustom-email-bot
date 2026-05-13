@@ -234,7 +234,9 @@ class SQLiteDatabase(BaseDatabase):
                     # Parse ISO format datetime string (e.g., '2026-05-13T15:04:28.113Z')
                     if received_at_str.endswith('Z'):
                         received_at_str = received_at_str[:-1] + '+00:00'
-                    received_at = datetime.fromisoformat(received_at_str.replace('Z', '+00:00'))
+                    # Parse as timezone-aware, then convert to naive
+                    aware_dt = datetime.fromisoformat(received_at_str.replace('Z', '+00:00'))
+                    received_at = aware_dt.replace(tzinfo=None)  # Convert to naive datetime
                 except (ValueError, TypeError):
                     # If parsing fails, use current time
                     received_at = datetime.now()
@@ -623,7 +625,9 @@ class PostgreSQLDatabase(BaseDatabase):
                     # Parse ISO format datetime string (e.g., '2026-05-13T15:04:28.113Z')
                     if received_at_str.endswith('Z'):
                         received_at_str = received_at_str[:-1] + '+00:00'
-                    received_at = datetime.fromisoformat(received_at_str.replace('Z', '+00:00'))
+                    # Parse as timezone-aware, then convert to naive
+                    aware_dt = datetime.fromisoformat(received_at_str.replace('Z', '+00:00'))
+                    received_at = aware_dt.replace(tzinfo=None)  # Convert to naive datetime
                 except (ValueError, TypeError):
                     # If parsing fails, use current time
                     received_at = datetime.now()
