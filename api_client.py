@@ -64,16 +64,11 @@ class FreeCustomAPIClient:
     async def validate_api_key(self) -> bool:
         """Validate API key by making a test request"""
         try:
-            # Try domains endpoint first (known to work)
-            await self._make_request('GET', '/domains')
+            # Try to get inboxes list - this should work if API key is valid
+            await self._make_request('GET', '/inboxes')
             return True
         except FreeCustomAPIError:
-            try:
-                # Fallback to account endpoint
-                await self._make_request('GET', '/account')
-                return True
-            except FreeCustomAPIError:
-                return False
+            return False
 
     async def get_domains(self) -> List[Dict[str, Any]]:
         """Get available domains"""

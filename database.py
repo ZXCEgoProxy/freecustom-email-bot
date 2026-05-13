@@ -96,29 +96,14 @@ class SQLiteDatabase(BaseDatabase):
             ''')
 
             # API Profiles table
-            await conn.execute('''
+            await db.execute('''
                 CREATE TABLE IF NOT EXISTS api_profiles (
-                    id SERIAL PRIMARY KEY,
-                    user_id BIGINT NOT NULL,
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
                     profile_name TEXT NOT NULL,
                     api_key TEXT NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (user_id) REFERENCES users (user_id)
-                )
-            ''')
-
-            # Messages table to cache emails
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS messages (
-                    id SERIAL PRIMARY KEY,
-                    inbox_id INTEGER NOT NULL REFERENCES inboxes(id) ON DELETE CASCADE,
-                    message_id TEXT NOT NULL,
-                    subject TEXT,
-                    sender TEXT,
-                    received_at TIMESTAMP,
-                    body_html TEXT,
-                    body_text TEXT,
-                    is_read BOOLEAN DEFAULT FALSE
                 )
             ''')
 
