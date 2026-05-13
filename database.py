@@ -645,7 +645,7 @@ class PostgreSQLDatabase(BaseDatabase):
                 INSERT INTO messages
                 (inbox_id, message_id, subject, sender, received_at, body_html, body_text)
                 VALUES ($1, $2, $3, $4, $5, $6, $7)
-                ON CONFLICT (message_id) DO NOTHING
+                ON CONFLICT DO NOTHING
             ''',
                 inbox_id,
                 message_data.get('id'),

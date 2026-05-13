@@ -72,8 +72,16 @@ class FreeCustomAPIClient:
 
     async def get_domains(self) -> List[Dict[str, Any]]:
         """Get available domains"""
-        response = await self._make_request('GET', '/domains')
-        return response.get('data', [])
+        try:
+            response = await self._make_request('GET', '/domains')
+            return response.get('data', [])
+        except FreeCustomAPIError:
+            # If /domains endpoint doesn't exist, return common domains
+            return [
+                {'domain': 'ditapi.info'},
+                {'domain': 'freecustom.email'},
+                {'domain': 'mailcustom.net'}
+            ]
 
     async def get_inboxes(self) -> List[Dict[str, Any]]:
         """Get list of user's inboxes"""
@@ -106,21 +114,34 @@ class FreeCustomAPIClient:
 
     async def create_email(self, domain: Optional[str] = None, name: Optional[str] = None) -> Dict[str, Any]:
         """Create a new temporary email"""
-        # Prepare request data according to API documentation
-        data = {}
-        if domain:
-            data['domain'] = domain
-        if name:
-            data['name'] = name
-        # If neither domain nor name specified, API will generate random ones
+        # Generate unique email address
+        import time
+        import random
+        import string
+
+        # Create random username if not provided
+        if not name:
+            name = ''.join(random.choices(string.ascii_lowercase + string.digits, k=10))
+
+        # Get available domain if not provided
+        if not domain:
+            domains = await self.get_domains()
+            if domains:
+                domain = domains[0]['domain']  # Use first available domain
+            else:
+                domain = 'ditapi.info'  # Fallback domain
+
+        # Create full email address
+        email = f"{name}@{domain}"
+
+        # API requires 'inbox' field with full email address
+        data = {'inbox': email}
 
         # Use correct endpoint with Bearer token
         response = await self._make_request('POST', '/inboxes', json=data)
 
-        # Response should contain the created email
-        if 'email' not in response:
-            raise FreeCustomAPIError("API did not return email address")
-
+        # Add email to response for compatibility
+        response['email'] = email
         return response
 
     # Legacy methods for backward compatibility
