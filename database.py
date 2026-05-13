@@ -602,8 +602,8 @@ class PostgreSQLDatabase(BaseDatabase):
                 INSERT INTO messages
                 (inbox_id, message_id, subject, sender, received_at, body_html, body_text)
                 VALUES ($1, $2, $3, $4, $5, $6, $7)
-                ON CONFLICT DO NOTHING
-            ''', (
+                ON CONFLICT (message_id) DO NOTHING
+            ''',
                 inbox_id,
                 message_data.get('id'),
                 message_data.get('subject'),
@@ -611,7 +611,7 @@ class PostgreSQLDatabase(BaseDatabase):
                 message_data.get('date'),
                 message_data.get('html'),  # API returns 'html' not 'body_html'
                 message_data.get('text')   # API returns 'text' not 'body_text'
-            ))
+            )
         finally:
             await self._release_connection(conn)
 
