@@ -499,13 +499,13 @@ async def refresh_email(callback: types.CallbackQuery):
         await callback.answer("❌ Почтовый ящик не найден")
         return
 
-    user_data = await db.get_user(user_id)
-    if not user_data:
-        await callback.answer("❌ API ключ не найден")
+    active_profile = await db.get_active_profile(user_id)
+    if not active_profile:
+        await callback.answer("❌ Активный API профиль не найден")
         return
 
     try:
-        async with FreeCustomAPIClient(user_data['api_key']) as client:
+        async with FreeCustomAPIClient(active_profile['api_key']) as client:
             messages_data = await client.get_email_messages(inbox['email'])
 
             # Save new messages
@@ -598,10 +598,10 @@ async def read_message(callback: types.CallbackQuery):
 
     if not body_html and not body_text:
         # Fetch full message content from API
-        user_data = await db.get_user(user_id)
-        if user_data:
+        active_profile = await db.get_active_profile(user_id)
+        if active_profile:
             try:
-                async with FreeCustomAPIClient(user_data['api_key']) as client:
+                async with FreeCustomAPIClient(active_profile['api_key']) as client:
                     full_message = await client.get_message(inbox['email'], str(message['message_id']))
                     body_html = full_message.get('html', '')
                     body_text = full_message.get('text', '')
