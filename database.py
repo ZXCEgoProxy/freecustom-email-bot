@@ -223,7 +223,22 @@ class SQLiteDatabase(BaseDatabase):
     # Message operations
     async def save_message(self, inbox_id: int, message_data: Dict[str, Any]):
         """Save message to cache"""
+        from datetime import datetime
+
         async with aiosqlite.connect(self.db_path) as db:
+            # Parse received_at datetime string to Python datetime object
+            received_at_str = message_data.get('date')
+            received_at = None
+            if received_at_str:
+                try:
+                    # Parse ISO format datetime string (e.g., '2026-05-13T15:04:28.113Z')
+                    if received_at_str.endswith('Z'):
+                        received_at_str = received_at_str[:-1] + '+00:00'
+                    received_at = datetime.fromisoformat(received_at_str.replace('Z', '+00:00'))
+                except (ValueError, TypeError):
+                    # If parsing fails, use current time
+                    received_at = datetime.now()
+
             await db.execute('''
                 INSERT OR IGNORE INTO messages
                 (inbox_id, message_id, subject, sender, received_at, body_html, body_text)
@@ -233,7 +248,7 @@ class SQLiteDatabase(BaseDatabase):
                 message_data.get('id'),
                 message_data.get('subject'),
                 message_data.get('from'),
-                message_data.get('date'),
+                received_at,
                 message_data.get('html'),  # API returns 'html' not 'body_html'
                 message_data.get('text')   # API returns 'text' not 'body_text'
             ))
@@ -596,8 +611,23 @@ class PostgreSQLDatabase(BaseDatabase):
 
     async def save_message(self, inbox_id: int, message_data: Dict[str, Any]):
         """Save message to cache"""
+        from datetime import datetime
+
         conn = await self._get_connection()
         try:
+            # Parse received_at datetime string to Python datetime object
+            received_at_str = message_data.get('date')
+            received_at = None
+            if received_at_str:
+                try:
+                    # Parse ISO format datetime string (e.g., '2026-05-13T15:04:28.113Z')
+                    if received_at_str.endswith('Z'):
+                        received_at_str = received_at_str[:-1] + '+00:00'
+                    received_at = datetime.fromisoformat(received_at_str.replace('Z', '+00:00'))
+                except (ValueError, TypeError):
+                    # If parsing fails, use current time
+                    received_at = datetime.now()
+
             await conn.execute('''
                 INSERT INTO messages
                 (inbox_id, message_id, subject, sender, received_at, body_html, body_text)
@@ -608,7 +638,7 @@ class PostgreSQLDatabase(BaseDatabase):
                 message_data.get('id'),
                 message_data.get('subject'),
                 message_data.get('from'),
-                message_data.get('date'),
+                received_at,
                 message_data.get('html'),  # API returns 'html' not 'body_html'
                 message_data.get('text')   # API returns 'text' not 'body_text'
             )
