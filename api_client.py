@@ -104,31 +104,23 @@ class FreeCustomAPIClient:
         response = await self._make_request('GET', f'/inboxes/{email}/otp')
         return response
 
-    async def create_email(self, domain: Optional[str] = None) -> Dict[str, Any]:
+    async def create_email(self, domain: Optional[str] = None, name: Optional[str] = None) -> Dict[str, Any]:
         """Create a new temporary email"""
-        # Generate unique email address
-        import time
-        import random
-        import string
-
-        # Create random username
-        username = ''.join(random.choices(string.ascii_lowercase + string.digits, k=10))
-        if not domain:
-            # Get first available domain if not specified
-            domains = await self.get_domains()
-            if domains:
-                domain = domains[0]['domain']  # Use first available domain
-
-        if not domain:
-            raise FreeCustomAPIError("No domain available for email creation")
-
-        email = f"{username}@{domain}"
-        data = {'inbox': email}
+        # Prepare request data according to API documentation
+        data = {}
+        if domain:
+            data['domain'] = domain
+        if name:
+            data['name'] = name
+        # If neither domain nor name specified, API will generate random ones
 
         # Use correct endpoint with Bearer token
         response = await self._make_request('POST', '/inboxes', json=data)
-        # Add email to response for compatibility
-        response['email'] = email
+
+        # Response should contain the created email
+        if 'email' not in response:
+            raise FreeCustomAPIError("API did not return email address")
+
         return response
 
     # Legacy methods for backward compatibility
